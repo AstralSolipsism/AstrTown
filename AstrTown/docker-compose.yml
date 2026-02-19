@@ -1,0 +1,105 @@
+services:
+  frontend:
+    build: .
+    restart: unless-stopped
+    ports:
+      - '40009:5173'
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    environment:
+      - VITE_CONVEX_URL=${URL_BASE:-https://town.outlune.com}
+      - VITE_CONVEX_SITE_URL=${URL_BASE:-https://town.outlune.com}
+    networks:
+      - astrtowndev
+
+  backend:
+    image: ghcr.io/get-convex/convex-backend:latest
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - '${PORT:-3210}:3210'
+      - '${SITE_PROXY_PORT:-3211}:3211'
+    volumes:
+      - /data/AstrTownDev/convex-data:/convex/data
+    environment:
+      - INSTANCE_NAME=${INSTANCE_NAME:-}
+      - INSTANCE_SECRET=${INSTANCE_SECRET:-}
+      - CONVEX_RELEASE_VERSION_DEV=${CONVEX_RELEASE_VERSION_DEV:-}
+      - ACTIONS_USER_TIMEOUT_SECS=${ACTIONS_USER_TIMEOUT_SECS:-}
+      - CONVEX_CLOUD_ORIGIN=${URL_BASE:-https://town.outlune.com}
+      - CONVEX_SITE_ORIGIN=${URL_BASE:-https://town.outlune.com}
+      - POSTGRES_URL=${POSTGRES_URL:-}
+      - DO_NOT_REQUIRE_SSL=${DO_NOT_REQUIRE_SSL:-1}
+    healthcheck:
+      test: curl -f http://localhost:3210/version
+      interval: 5s
+      start_period: 5s
+    networks:
+      - astrtowndev
+
+  gateway:
+    build:
+      context: ../gateway
+      dockerfile: Dockerfile
+    container_name: astrtown-gateway
+    restart: unless-stopped
+    ports:
+      - "40010:4000"
+    environment:
+      - ASTRTOWN_URL=http://backend:3211
+      - GATEWAY_SECRET=${GATEWAY_SECRET}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - astrtowndev
+
+  dashboard:
+    image: astrtown-dashboard:release
+    restart: unless-stopped
+    ports:
+      - '${DASHBOARD_PORT:-6791}:6791'
+    environment:
+      - NEXT_PUBLIC_DEPLOYMENT_URL=${URL_BASE:-https://town.outlune.com}
+      - NEXT_PUBLIC_GATEWAY_URL=${GATEWAY_URL_FOR_BROWSER:-http://127.0.0.1:40010}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - astrtowndev
+
+  convex-init:
+    build: .
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    environment:
+      - CONVEX_SELF_HOSTED_URL=http://backend:3210
+      - CONVEX_SELF_HOSTED_ADMIN_KEY=${CONVEX_ADMIN_KEY}
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        if [ -z "$$CONVEX_SELF_HOSTED_ADMIN_KEY" ]; then
+          echo "⚠️  CONVEX_ADMIN_KEY 未设置，跳过 Convex 环境变量初始化"
+          echo "请先执行: docker compose exec backend ./generate_admin_key.sh"
+          echo "然后将输出写入 .env 的 CONVEX_ADMIN_KEY 字段，再重新 docker compose up"
+          exit 0
+        fi
+        echo "🔧 正在设置 Convex 运行时环境变量..."
+        npx convex env set GATEWAY_URL "http://gateway:4000" &&
+        npx convex env set GATEWAY_SECRET "${GATEWAY_SECRET}" &&
+        npx convex env set BOT_ADMIN_SECRET "${BOT_ADMIN_SECRET}" &&
+        echo "✅ Convex 环境变量初始化完成"
+    restart: "no"
+    networks:
+      - astrtowndev
+
+networks:
+  astrtowndev:
+    name: astrtowndev
+    driver: bridge
