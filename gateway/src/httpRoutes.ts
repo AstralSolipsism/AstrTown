@@ -3,6 +3,16 @@ import type { FastifyInstance } from 'fastify';
 import type { AstrTownClient, UpdateDescriptionResponse } from './astrtownClient.js';
 import type { EventPriority, WsWorldEventBase } from './types.js';
 
+const SUPPORTED_GATEWAY_EVENT_TYPES = new Set<string>([
+  'agent.state_changed',
+  'conversation.started',
+  'conversation.invited',
+  'conversation.message',
+  'conversation.timeout',
+  'action.finished',
+  'agent.queue_refill_requested',
+]);
+
 export type IncomingWorldEvent = {
   eventType: string;
   eventAgentId: string;
@@ -44,6 +54,11 @@ export function parseIncomingWorldEvent(body: any): IncomingWorldEvent {
   }
 
   if (typeof eventType !== 'string' || eventType.length === 0) throw new Error('Missing eventType');
+  if (!SUPPORTED_GATEWAY_EVENT_TYPES.has(eventType)) {
+    throw new Error(
+      `Unsupported eventType: "${eventType}". Supported: ${[...SUPPORTED_GATEWAY_EVENT_TYPES].join(', ')}`,
+    );
+  }
   if (typeof eventAgentId !== 'string' || eventAgentId.length === 0) throw new Error('Missing eventAgentId');
   if (typeof targetAgentId !== 'string' || targetAgentId.length === 0) throw new Error('Missing targetAgentId');
   if (typeof worldId !== 'string' || worldId.length === 0) throw new Error('Missing worldId');
@@ -148,5 +163,31 @@ export function registerBotHttpProxyRoutes(
       reply.code(mapUpdateDescriptionErrorStatus(res));
     }
     return res;
+  });
+
+  app.post('/api/bot/memory/search', async (req, reply) => {
+    const auth = req.headers.authorization;
+    if (typeof auth !== 'string' || auth.length === 0) {
+      reply.code(401);
+      return { ok: false, error: 'Missing Authorization header' };
+    }
+
+    try {
+      const res = await fetch(`${(deps.astr as any).baseUrl ?? ''}/api/bot/memory/search`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: auth,
+        },
+        body: JSON.stringify(req.body ?? {}),
+      });
+      const data = (await res.json().catch(() => ({}))) as any;
+      reply.code(res.status);
+      return data;
+    } catch (e: any) {
+      deps.log.error({ err: String(e?.message ?? e) }, 'memorySearch proxy failed');
+      reply.code(500);
+      return { ok: false, error: 'Gateway error' };
+    }
   });
 }

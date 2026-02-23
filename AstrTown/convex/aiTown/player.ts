@@ -39,6 +39,10 @@ export const activity = v.object({
   description: v.string(),
   emoji: v.optional(v.string()),
   until: v.number(),
+  // 记录动作开始的真实时间戳，用于前端计算进度
+  started: v.number(),
+  // 记录触发该动作的网关 operationId/eventId，用于完成时溯源
+  actionId: v.optional(v.string()),
 });
 export type Activity = Infer<typeof activity>;
 
@@ -84,6 +88,26 @@ export class Player {
   tick(game: Game, now: number) {
     if (this.human && this.lastInput < now - HUMAN_IDLE_TOO_LONG) {
       this.leave(game, now);
+    }
+
+    // ===== activity 超时完成结算 =====
+    const player = this;
+    if (player.activity && now >= player.activity.until) {
+      const finishedActionId = player.activity.actionId;
+      player.activity = undefined;
+
+      // pendingOperations 的 eventId 可能不允许 undefined；没有 actionId 时不推送
+      if (finishedActionId !== undefined) {
+        game.pendingOperations.push({
+          name: 'action.finished',
+          args: {
+            agentId: player.id,
+            actionType: 'activity',
+            success: true,
+            result: { reason: 'activity_completed', eventId: finishedActionId },
+          },
+        });
+      }
     }
   }
 

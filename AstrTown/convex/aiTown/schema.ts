@@ -3,7 +3,6 @@ import { defineTable } from 'convex/server';
 import { serializedPlayer } from './player';
 import { serializedPlayerDescription } from './playerDescription';
 import { serializedAgent } from './agent';
-import { serializedAgentDescription } from './agentDescription';
 import { serializedWorld } from './world';
 import { serializedWorldMap } from './worldMap';
 import { serializedConversation } from './conversation';
@@ -36,10 +35,6 @@ export const aiTownTables = {
     worldId: v.id('worlds'),
     ...serializedPlayerDescription,
   }).index('worldId', ['worldId', 'playerId']),
-  agentDescriptions: defineTable({
-    worldId: v.id('worlds'),
-    ...serializedAgentDescription,
-  }).index('worldId', ['worldId', 'agentId']),
 
   //The game engine doesn't want to track players that have left or conversations that are over, since
   // it wants to keep its managed state small. However, we may want to look at old conversations in the

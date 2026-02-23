@@ -2,8 +2,11 @@ import { httpAction, mutation, query } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { v } from 'convex/values';
 import { Id } from './_generated/dataModel';
-import { api } from './_generated/api';
+import { api, internal } from './_generated/api';
 import { insertInput } from './aiTown/insertInput';
+import type { ExternalEventItem } from './aiTown/agent';
+import * as memory from './agent/memory';
+import * as embeddingsCache from './agent/embeddingsCache';
 
 function jsonResponse(body: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(body), {
@@ -83,6 +86,7 @@ type CommandType =
   | 'say'
   | 'start_conversation'
   | 'accept_invite'
+  | 'reject_invite'
   | 'leave_conversation'
   | 'continue_doing'
   | 'do_something';
@@ -93,6 +97,7 @@ type CommandMapping = {
     | 'externalBotSendMessage'
     | 'startConversation'
     | 'acceptInvite'
+    | 'rejectInvite'
     | 'leaveConversation';
   buildInputArgs: (p: { agentId: string; playerId: string; args: any }) => any;
 };
@@ -130,6 +135,13 @@ const commandMappings: Record<CommandType, CommandMapping> = {
       conversationId: args?.conversationId,
     }),
   },
+  reject_invite: {
+    inputName: 'rejectInvite',
+    buildInputArgs: ({ playerId, args }) => ({
+      playerId,
+      conversationId: args?.conversationId,
+    }),
+  },
   leave_conversation: {
     inputName: 'leaveConversation',
     buildInputArgs: ({ playerId, args }) => ({
@@ -156,6 +168,113 @@ const commandMappings: Record<CommandType, CommandMapping> = {
     }),
   },
 };
+
+type PostCommandEnqueueMode = 'immediate' | 'queue';
+
+const supportedExternalEventKinds = new Set<ExternalEventItem['kind']>([
+  'move_to',
+  'say',
+  'emote',
+  'start_conversation',
+  'accept_invite',
+  'reject_invite',
+  'leave_conversation',
+  'continue_doing',
+  'do_something',
+]);
+
+function normalizeExternalEventKind(kind: string, fieldPath: string): ExternalEventItem['kind'] {
+  if (!supportedExternalEventKinds.has(kind as ExternalEventItem['kind'])) {
+    throw new ParameterValidationError(`${fieldPath} has unsupported value: ${kind}`);
+  }
+  return kind as ExternalEventItem['kind'];
+}
+
+function normalizeExternalEventPriority(
+  priority: number | undefined,
+  fieldPath: string,
+): ExternalEventItem['priority'] {
+  const finalPriority = priority ?? 2;
+  if (!Number.isInteger(finalPriority) || finalPriority < 0 || finalPriority > 3) {
+    throw new ParameterValidationError(`${fieldPath} must be an integer between 0 and 3`);
+  }
+  return finalPriority as ExternalEventItem['priority'];
+}
+
+function normalizeExternalEventArgs(args: any, fieldPath: string): Record<string, any> {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    throw new ParameterValidationError(`${fieldPath} must be an object`);
+  }
+  return args;
+}
+
+function mapCommandTypeToExternalEventKind(commandType: CommandType): ExternalEventItem['kind'] {
+  switch (commandType) {
+    case 'move_to':
+      return 'move_to';
+    case 'say':
+      return 'say';
+    case 'start_conversation':
+      return 'start_conversation';
+    case 'accept_invite':
+      return 'accept_invite';
+    case 'reject_invite':
+      return 'reject_invite';
+    case 'leave_conversation':
+      return 'leave_conversation';
+    case 'continue_doing':
+      return 'continue_doing';
+    case 'do_something':
+      return 'do_something';
+  }
+}
+
+function defaultQueuePriorityForCommand(commandType: CommandType): ExternalEventItem['priority'] {
+  // 邀请响应需要插队进入 priorityQueue，避免 invited 状态下无法及时消费。
+  if (commandType === 'accept_invite' || commandType === 'reject_invite') {
+    return 1;
+  }
+  return 2;
+}
+
+function buildExternalEventFromCommand(
+  commandType: CommandType,
+  normalizedArgs: any,
+  now: number,
+): ExternalEventItem {
+  const expiresAt =
+    normalizedArgs?.expiresAt !== undefined && typeof normalizedArgs.expiresAt !== 'number'
+      ? (() => {
+          throw new ParameterValidationError('args.expiresAt must be number');
+        })()
+      : normalizedArgs?.expiresAt;
+
+  return {
+    eventId: crypto.randomUUID(),
+    kind: mapCommandTypeToExternalEventKind(commandType),
+    args: normalizeExternalEventArgs(normalizedArgs, 'args'),
+    priority: defaultQueuePriorityForCommand(commandType),
+    enqueueTs: now,
+    expiresAt,
+    source: 'gateway',
+  };
+}
+
+async function loadWorldAndAgent(
+  ctx: { runQuery: ActionCtx['runQuery'] },
+  worldId: Id<'worlds'>,
+  agentId: string,
+) {
+  const world = await ctx.runQuery((api as any).botApi.getWorldById as any, { worldId });
+  if (!world) {
+    throw new ParameterValidationError('World not found');
+  }
+  const agent = world.agents?.find?.((candidate: any) => candidate?.id === agentId);
+  if (!agent) {
+    throw new ParameterValidationError('Agent not found');
+  }
+  return { world, agent };
+}
 
 export const tokenDocByToken = query({
   args: { token: v.string() },
@@ -264,6 +383,177 @@ export const getWorldById = query({
   },
 });
 
+export const getExternalQueueStatus = query({
+  args: {
+    worldId: v.id('worlds'),
+    agentId: v.string(),
+  },
+  handler: async (ctx: any, args: any) => {
+    const world = await ctx.db.get(args.worldId);
+    if (!world) {
+      throw new Error('World not found');
+    }
+    const agent = world.agents?.find?.((candidate: any) => candidate?.id === args.agentId);
+    if (!agent) {
+      throw new Error('Agent not found');
+    }
+
+    const priorityQueueDepth = Array.isArray(agent.externalPriorityQueue)
+      ? agent.externalPriorityQueue.length
+      : 0;
+    const normalQueueDepth = Array.isArray(agent.externalEventQueue)
+      ? agent.externalEventQueue.length
+      : 0;
+
+    const queueState = agent.externalQueueState ?? {
+      prefetch: {
+        retries: 0,
+        waiting: false,
+      },
+      idle: {
+        mode: 'active',
+        consecutivePrefetchMisses: 0,
+      },
+    };
+
+    return {
+      worldId: args.worldId,
+      agentId: args.agentId,
+      isExternalControlled: true,
+      queueDepth: priorityQueueDepth + normalQueueDepth,
+      priorityQueueDepth,
+      normalQueueDepth,
+      prefetch: queueState.prefetch,
+      idle: queueState.idle,
+      lastDequeuedAt: queueState.lastDequeuedAt ?? null,
+    };
+  },
+});
+
+export const postCommandBatch = mutation({
+  args: {
+    worldId: v.id('worlds'),
+    agentId: v.string(),
+    events: v.array(
+      v.object({
+        eventId: v.string(),
+        kind: v.string(),
+        args: v.any(),
+        priority: v.optional(v.number()),
+        expiresAt: v.optional(v.number()),
+      }),
+    ),
+  },
+  handler: async (ctx: any, args: any) => {
+    const world = await ctx.db.get(args.worldId);
+    if (!world) {
+      throw new ParameterValidationError('World not found');
+    }
+    const agent = world.agents?.find?.((candidate: any) => candidate?.id === args.agentId);
+    if (!agent) {
+      throw new ParameterValidationError('Agent not found');
+    }
+
+    const now = Date.now();
+    const events: ExternalEventItem[] = args.events.map((event: any, index: number) => {
+      if (event.expiresAt !== undefined && typeof event.expiresAt !== 'number') {
+        throw new ParameterValidationError(`events[${index}].expiresAt must be number`);
+      }
+      return {
+        eventId: event.eventId,
+        kind: normalizeExternalEventKind(event.kind, `events[${index}].kind`),
+        args: normalizeExternalEventArgs(event.args, `events[${index}].args`),
+        priority: normalizeExternalEventPriority(event.priority, `events[${index}].priority`),
+        enqueueTs: now,
+        expiresAt: event.expiresAt,
+        source: 'gateway',
+      };
+    });
+
+    return await insertInput(ctx as any, args.worldId, 'enqueueExternalEvents' as any, {
+      agentId: args.agentId,
+      events,
+    } as any);
+  },
+});
+
+export const postCommandBatchHttp = httpAction(async (ctx: ActionCtx, request: Request) => {
+  const token = parseBearerToken(request);
+  if (!token) return unauthorized('AUTH_FAILED', 'Missing bearer token');
+  const verified = await verifyBotToken(ctx, token);
+  if (!verified.valid) return unauthorized(verified.code, verified.message);
+
+  const idemKey = request.headers.get('x-idempotency-key');
+  if (!idemKey) return badRequest('INVALID_ARGS', 'Missing X-Idempotency-Key');
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch (e: any) {
+    const message = String(e?.message ?? 'Request body is not valid JSON');
+    return badRequest('INVALID_JSON', message);
+  }
+
+  const worldId = body?.worldId;
+  const agentId = body?.agentId;
+  const events = body?.events;
+
+  if (agentId !== verified.binding.agentId) {
+    return unauthorized('AUTH_FAILED', 'agentId mismatch');
+  }
+  if (worldId !== verified.binding.worldId) {
+    return unauthorized('AUTH_FAILED', 'worldId mismatch');
+  }
+  if (!Array.isArray(events) || events.length === 0) {
+    return badRequest('INVALID_ARGS', 'events must be a non-empty array');
+  }
+
+  const tokenDoc = await ctx.runQuery((api as any).botApi.tokenDocByToken as any, { token });
+  if (!tokenDoc) return unauthorized('INVALID_TOKEN', 'Token not found');
+
+  if (tokenDoc.lastIdempotencyKey && tokenDoc.lastIdempotencyKey === idemKey) {
+    if (!tokenDoc.lastIdempotencyResult) {
+      return jsonResponse(
+        { status: 'conflict', message: 'Duplicate request but history result not found' },
+        { status: 409 },
+      );
+    }
+    return jsonResponse(tokenDoc.lastIdempotencyResult, { status: 200 });
+  }
+
+  let responseBody: any;
+  try {
+    const inputId = await ctx.runMutation((api as any).botApi.postCommandBatch as any, {
+      worldId,
+      agentId,
+      events,
+    });
+    responseBody = { status: 'accepted', inputId };
+  } catch (e: any) {
+    const rawMessage = String(e?.message ?? e);
+    if (e instanceof ParameterValidationError) {
+      responseBody = { valid: false, status: 'rejected', code: 'INVALID_ARGS', message: rawMessage };
+    } else {
+      responseBody = { valid: false, status: 'rejected', code: 'INTERNAL_ERROR', message: 'internal failure' };
+    }
+  }
+
+  try {
+    await ctx.runMutation((api as any).botApi.patchTokenUsage as any, {
+      tokenDocId: tokenDoc.id,
+      lastUsedAt: Date.now(),
+      lastIdempotencyKey: idemKey,
+      lastIdempotencyResult: responseBody,
+    });
+  } catch {
+    // ignore
+  }
+
+  if (responseBody?.status === 'accepted') return jsonResponse(responseBody);
+  const status = responseBody?.code === 'INTERNAL_ERROR' ? 500 : 400;
+  return jsonResponse(responseBody, { status });
+});
+
 class ParameterValidationError extends Error {
   code = 'INVALID_ARGS' as const;
   constructor(message: string) {
@@ -343,12 +633,20 @@ export const postCommand = httpAction(async (ctx: ActionCtx, request: Request) =
   const agentId = body?.agentId;
   const commandType = body?.commandType as CommandType | undefined;
   const args = body?.args;
+  const enqueueMode = body?.enqueueMode as PostCommandEnqueueMode | undefined;
 
   if (agentId !== verified.binding.agentId) {
     return unauthorized('AUTH_FAILED', 'agentId mismatch');
   }
   if (!commandType || !(commandType in commandMappings)) {
     return badRequest('INVALID_ARGS', 'Unknown commandType');
+  }
+  if (
+    enqueueMode !== undefined &&
+    enqueueMode !== 'immediate' &&
+    enqueueMode !== 'queue'
+  ) {
+    return badRequest('INVALID_ARGS', 'enqueueMode must be immediate or queue');
   }
 
   const tokenDoc = await ctx.runQuery((api as any).botApi.tokenDocByToken as any, { token });
@@ -377,8 +675,25 @@ export const postCommand = httpAction(async (ctx: ActionCtx, request: Request) =
       playerId: verified.binding.playerId,
       ctxHasDb: Boolean((ctx as any)?.db),
       usingRunMutation: true,
+      enqueueMode: enqueueMode ?? 'immediate',
     });
-    if (commandType === 'say') {
+    if (enqueueMode === 'queue') {
+      const { agent } = await loadWorldAndAgent(
+        ctx,
+        verified.binding.worldId,
+        verified.binding.agentId,
+      );
+      const now = Date.now();
+      const queueEvent = buildExternalEventFromCommand(commandType, normalizedArgs, now);
+      inputId = await ctx.runMutation((api as any).aiTown.main.sendInput as any, {
+        worldId: verified.binding.worldId,
+        name: 'enqueueExternalEvents',
+        args: {
+          agentId: verified.binding.agentId,
+          events: [queueEvent],
+        },
+      });
+    } else if (commandType === 'say') {
       inputId = await ctx.runMutation((api as any).botApi.writeExternalBotMessage as any, {
         worldId: verified.binding.worldId,
         conversationId: normalizedArgs?.conversationId,
@@ -389,12 +704,14 @@ export const postCommand = httpAction(async (ctx: ActionCtx, request: Request) =
         leaveConversation: !!normalizedArgs?.leaveAfter,
       });
     } else if (commandType === 'do_something' && normalizedArgs?.actionType === 'go_home_and_sleep') {
+      // 阶段2：Agent 天生外控，不再支持切换模式。这里改为 no-op，保持接口兼容。
       inputId = await ctx.runMutation((api as any).aiTown.main.sendInput as any, {
         worldId: verified.binding.worldId,
-        name: 'setExternalControl',
+        name: 'finishDoSomething',
         args: {
+          operationId: crypto.randomUUID(),
           agentId: verified.binding.agentId,
-          enabled: false,
+          activity: { description: 'idle', emoji: '😴', until: Date.now() + 60_000 },
         },
       });
     } else {
@@ -491,7 +808,7 @@ export const getAgentStatus = httpAction(async (ctx: ActionCtx, request: Request
     agentId,
     playerId: verified.binding.playerId,
     position: player.position,
-    isExternalControlled: agent.isExternalControlled ?? false,
+    isExternalControlled: true,
     currentActivity: player.activity ?? null,
     inConversation:
       world.conversations.find((c: any) => c.participants?.some?.((m: any) => m.playerId === player.id))?.id ??
@@ -502,101 +819,6 @@ export const getAgentStatus = httpAction(async (ctx: ActionCtx, request: Request
   });
 });
 
-export const postControl = httpAction(async (ctx: ActionCtx, request: Request) => {
-  const token = parseBearerToken(request);
-  if (!token) return unauthorized('AUTH_FAILED', 'Missing bearer token');
-  const verified = await verifyBotToken(ctx, token);
-  if (!verified.valid) return unauthorized(verified.code, verified.message);
-
-  console.log('[botApi.postControl] token verified', {
-    tokenPrefix: token.slice(0, 8),
-    agentId: verified.binding.agentId,
-    playerId: verified.binding.playerId,
-    worldId: String(verified.binding.worldId),
-  });
-
-  let body: any;
-  try {
-    body = await request.json();
-  } catch {
-    return badRequest('INVALID_JSON', 'Request body is not valid JSON');
-  }
-  const enabled = body?.enabled;
-
-  if (typeof enabled !== 'boolean') {
-    return badRequest('INVALID_ARGS', 'enabled must be boolean');
-  }
-
-  const agentId = verified.binding.agentId;
-
-  console.log('[botApi.postControl] before getWorldById', {
-    agentId,
-    worldId: String(verified.binding.worldId),
-    enabled,
-  });
-
-  let world: any;
-  try {
-    world = await ctx.runQuery((api as any).botApi.getWorldById as any, { worldId: verified.binding.worldId });
-    console.log('[botApi.postControl] getWorldById result', {
-      worldId: String(verified.binding.worldId),
-      found: Boolean(world),
-    });
-  } catch (e: any) {
-    console.error('[botApi.postControl] getWorldById threw', {
-      worldId: String(verified.binding.worldId),
-      err: String(e?.message ?? e),
-    });
-    throw e;
-  }
-  if (!world) return badRequest('WORLD_NOT_FOUND', 'World not found');
-  const agent = world.agents.find((a: any) => a.id === agentId);
-  console.log('[botApi.postControl] find agent result', {
-    agentId,
-    worldId: String(verified.binding.worldId),
-    found: Boolean(agent),
-  });
-  if (!agent) return badRequest('NPC_NOT_FOUND', 'Agent not found');
-
-  console.log('[botApi.postControl] enqueue setExternalControl', {
-    agentId,
-    worldId: String(verified.binding.worldId),
-    enabled,
-    ctxHasDb: Boolean((ctx as any)?.db),
-    usingRunMutation: true,
-  });
-
-  try {
-    await ctx.runMutation((api as any).aiTown.main.sendInput as any, {
-      worldId: verified.binding.worldId,
-      name: 'setExternalControl',
-      args: {
-        agentId,
-        enabled,
-      },
-    });
-  } catch (e: any) {
-    console.error('[botApi.postControl] enqueue setExternalControl failed', {
-      agentId,
-      worldId: String(verified.binding.worldId),
-      enabled,
-      err: String(e?.message ?? e),
-    });
-    throw e;
-  }
-
-  console.log('[botApi.postControl] enqueue setExternalControl done', {
-    agentId,
-    worldId: String(verified.binding.worldId),
-    enabled,
-  });
-
-  return jsonResponse({
-    agentId,
-    isExternalControlled: enabled,
-    previousMode: agent.isExternalControlled ? 'external' : 'internal',
-  });
-});
 
 export const postTokenValidate = httpAction(async (ctx: ActionCtx, request: Request) => {
   let body: any;
@@ -716,4 +938,51 @@ export const postTokenCreate = httpAction(async (ctx: ActionCtx, request: Reques
     return badRequest('INVALID_ARGS', message);
   }
   return jsonResponse(res);
+});
+
+export const postMemorySearch = httpAction(async (ctx: ActionCtx, request: Request) => {
+  const token = parseBearerToken(request);
+  if (!token) return unauthorized('AUTH_FAILED', 'Missing bearer token');
+
+  const verified = await verifyBotToken(ctx, token);
+  if (!verified.valid) return unauthorized(verified.code, verified.message);
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch (e: any) {
+    const message = String(e?.message ?? 'Request body is not valid JSON');
+    return badRequest('INVALID_JSON', message);
+  }
+
+  const queryText = body?.queryText;
+  const limit = body?.limit ?? 3;
+
+  if (!queryText || typeof queryText !== 'string') {
+    return badRequest('INVALID_ARGS', 'Missing queryText');
+  }
+  if (!Number.isInteger(limit) || limit <= 0 || limit > 50) {
+    return badRequest('INVALID_ARGS', 'limit must be an integer between 1 and 50');
+  }
+
+  try {
+    const embedding = await embeddingsCache.fetch(ctx, queryText);
+
+    const memories = await memory.searchMemories(
+      ctx,
+      verified.binding.playerId as any,
+      embedding,
+      limit,
+    );
+
+    return jsonResponse({
+      ok: true,
+      memories: memories.map((m) => ({
+        description: m.description,
+        importance: m.importance,
+      })),
+    });
+  } catch (error: any) {
+    return jsonResponse({ ok: false, error: String(error?.message ?? error) }, { status: 500 });
+  }
 });

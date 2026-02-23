@@ -13,7 +13,9 @@ const init = mutation({
   args: {
     numAgents: v.optional(v.number()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, _args) => {
+    // 平台模式：初始化只负责创建/恢复默认 world + 启动引擎循环。
+    // NPC/Agent 必须由外部插件显式创建（createAgent / createPlayer 等输入）。
     detectMismatchedLLMProvider();
     const { worldStatus, engine } = await getOrCreateDefaultWorld(ctx);
     if (worldStatus.status !== 'running') {
@@ -22,19 +24,9 @@ const init = mutation({
       );
       return;
     }
-    const shouldCreate = await shouldCreateAgents(
-      ctx.db,
-      worldStatus.worldId,
-      worldStatus.engineId,
-    );
-    if (shouldCreate) {
-      const toCreate = args.numAgents !== undefined ? args.numAgents : Descriptions.length;
-      for (let i = 0; i < toCreate; i++) {
-        await insertInput(ctx, worldStatus.worldId, 'createAgent', {
-          descriptionIndex: i % Descriptions.length,
-        });
-      }
-    }
+
+    // 兼容旧逻辑：不再在 init 中自动注入 createAgent 输入。
+    // 如需批量创建 NPC，用 testing/debug 专用 mutation 或外部插件调用 sendInput。
   },
 });
 export default init;

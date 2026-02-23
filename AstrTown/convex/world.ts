@@ -212,10 +212,6 @@ export const gameDescriptions = query({
       .query('playerDescriptions')
       .withIndex('worldId', (q) => q.eq('worldId', args.worldId))
       .collect();
-    const agentDescriptions = await ctx.db
-      .query('agentDescriptions')
-      .withIndex('worldId', (q) => q.eq('worldId', args.worldId))
-      .collect();
     const worldMap = await ctx.db
       .query('maps')
       .withIndex('worldId', (q) => q.eq('worldId', args.worldId))
@@ -223,7 +219,7 @@ export const gameDescriptions = query({
     if (!worldMap) {
       throw new Error(`No map for world: ${args.worldId}`);
     }
-    return { worldMap, playerDescriptions, agentDescriptions };
+    return { worldMap, playerDescriptions };
   },
 });
 

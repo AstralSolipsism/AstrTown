@@ -3,6 +3,9 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { AnimatedSprite, Container, Graphics, Text } from '@pixi/react';
 import * as PIXI from 'pixi.js';
 
+// 模块级别精灵表缓存，以纹理 URL 为 key，避免多个 Character 实例重复解析导致纹理重复添加到缓存
+const spritesheetCache = new Map<string, Promise<Spritesheet>>();
+
 export const Character = ({
   textureUrl,
   spritesheetData,
@@ -13,6 +16,8 @@ export const Character = ({
   isThinking = false,
   isSpeaking = false,
   emoji = '',
+  activity,
+  historicalTime,
   isViewer = false,
   speed = 0.1,
   onClick,
@@ -31,6 +36,12 @@ export const Character = ({
   // Shows a speech bubble if true.
   isSpeaking?: boolean;
   emoji?: string;
+  activity?: {
+    started: number;
+    until: number;
+    description: string;
+  };
+  historicalTime?: number;
   // Highlights the player.
   isViewer?: boolean;
   // The speed of the animation. Can be tuned depending on the side and speed of the NPC.
@@ -39,17 +50,22 @@ export const Character = ({
 }) => {
   const [spriteSheet, setSpriteSheet] = useState<Spritesheet>();
   useEffect(() => {
-    const parseSheet = async () => {
-      const sheet = new Spritesheet(
-        BaseTexture.from(textureUrl, {
-          scaleMode: PIXI.SCALE_MODES.NEAREST,
-        }),
-        spritesheetData,
-      );
-      await sheet.parse();
-      setSpriteSheet(sheet);
+    const loadSheet = async () => {
+      // 检查缓存，避免相同纹理被重复解析，防止同名帧重复添加到 TextureCache
+      let promise = spritesheetCache.get(textureUrl);
+      if (!promise) {
+        const sheet = new Spritesheet(
+          BaseTexture.from(textureUrl, {
+            scaleMode: PIXI.SCALE_MODES.NEAREST,
+          }),
+          spritesheetData,
+        );
+        promise = sheet.parse().then(() => sheet);
+        spritesheetCache.set(textureUrl, promise);
+      }
+      setSpriteSheet(await promise);
     };
-    void parseSheet();
+    void loadSheet();
   }, []);
 
   // The first "left" is "right" but reflected.
@@ -83,8 +99,62 @@ export const Character = ({
       break;
   }
 
+  const now = historicalTime ?? Date.now();
+  const duration = activity ? activity.until - activity.started : 0;
+  const rawProgress = activity && duration > 0 ? (now - activity.started) / duration : 0;
+  const progress = Math.max(0, Math.min(1, rawProgress));
+
+  const PROGRESS_BAR_WIDTH = 46;
+  const PROGRESS_BAR_HEIGHT = 6;
+  const PROGRESS_BAR_RADIUS = 3;
+  const PROGRESS_BAR_Y = -44;
+  const PROGRESS_LABEL_Y = -58;
+
+  const drawProgressBar = useCallback(
+    (g: PIXI.Graphics) => {
+      g.clear();
+      if (!activity) return;
+
+      const x0 = -PROGRESS_BAR_WIDTH / 2;
+      const y0 = PROGRESS_BAR_Y;
+
+      g.beginFill(0x111111, 0.65);
+      g.drawRoundedRect(x0, y0, PROGRESS_BAR_WIDTH, PROGRESS_BAR_HEIGHT, PROGRESS_BAR_RADIUS);
+      g.endFill();
+
+      const fillW = Math.max(0, Math.min(PROGRESS_BAR_WIDTH, PROGRESS_BAR_WIDTH * progress));
+      if (fillW <= 0) return;
+
+      g.beginFill(0x22c55e, 0.9);
+      g.drawRoundedRect(x0, y0, fillW, PROGRESS_BAR_HEIGHT, PROGRESS_BAR_RADIUS);
+      g.endFill();
+    },
+    [activity, progress],
+  );
+
   return (
-    <Container x={x} y={y} interactive={true} pointerdown={onClick} cursor="pointer">
+    <Container x={x} y={y} eventMode="static" pointerdown={onClick} cursor="pointer">
+      {activity && (
+        <>
+          <Text
+            x={0}
+            y={PROGRESS_LABEL_Y}
+            scale={{ x: -0.6, y: 0.6 }}
+            text={activity.description}
+            anchor={{ x: 0.5, y: 0.5 }}
+            style={
+              new PIXI.TextStyle({
+                fill: 0xffffff,
+                fontSize: 12,
+                fontFamily: 'Arial',
+                stroke: 0x000000,
+                strokeThickness: 3,
+              })
+            }
+          />
+          <Graphics draw={drawProgressBar} />
+        </>
+      )}
       {isThinking && (
         // TODO: We'll eventually have separate assets for thinking and speech animations.
         <Text x={-20} y={-10} scale={{ x: -0.8, y: 0.8 }} text={'💭'} anchor={{ x: 0.5, y: 0.5 }} />

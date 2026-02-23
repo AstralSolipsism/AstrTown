@@ -6,7 +6,7 @@ export default defineConfig({
   base: '/ai-town',
   plugins: [react()],
   server: {
-    allowedHosts: true,
+    allowedHosts: ['town.outlune.com'],
     hmr: {
       protocol: 'wss',
       host: 'town.outlune.com',

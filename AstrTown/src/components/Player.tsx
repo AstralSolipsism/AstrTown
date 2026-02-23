@@ -66,26 +66,28 @@ export const Player = ({
   const historicalFacing = { dx: historicalLocation.dx, dy: historicalLocation.dy };
   return (
     <>
-      <Character
-        x={historicalLocation.x * tileDim + tileDim / 2}
-        y={historicalLocation.y * tileDim + tileDim / 2}
-        orientation={orientationDegrees(historicalFacing)}
-        isMoving={historicalLocation.speed > 0}
-        isThinking={isThinking}
-        isSpeaking={isSpeaking}
-        emoji={
-          player.activity && player.activity.until > (historicalTime ?? Date.now())
-            ? player.activity?.emoji
-            : undefined
-        }
-        isViewer={isViewer}
-        textureUrl={character.textureUrl}
-        spritesheetData={character.spritesheetData}
-        speed={character.speed}
-        onClick={() => {
-          onClick({ kind: 'player', id: player.id });
-        }}
-      />
+       <Character
+         x={historicalLocation.x * tileDim + tileDim / 2}
+         y={historicalLocation.y * tileDim + tileDim / 2}
+         orientation={orientationDegrees(historicalFacing)}
+         isMoving={historicalLocation.speed > 0}
+         isThinking={isThinking}
+         isSpeaking={isSpeaking}
+         emoji={
+           player.activity && player.activity.until > (historicalTime ?? Date.now())
+             ? player.activity?.emoji
+             : undefined
+         }
+         activity={player.activity}
+         historicalTime={historicalTime}
+         isViewer={isViewer}
+         textureUrl={character.textureUrl}
+         spritesheetData={character.spritesheetData}
+         speed={character.speed}
+         onClick={() => {
+           onClick({ kind: 'player', id: player.id });
+         }}
+       />
     </>
   );
 };

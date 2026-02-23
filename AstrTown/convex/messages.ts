@@ -47,6 +47,7 @@ export const writeMessage = mutation({
     await insertInput(ctx, args.worldId, 'finishSendingMessage', {
       conversationId: args.conversationId,
       playerId: args.playerId,
+      text: args.text,
       timestamp: Date.now(),
     });
   },

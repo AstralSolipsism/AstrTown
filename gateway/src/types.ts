@@ -46,6 +46,11 @@ export type ConversationMessagePayload = {
   };
 };
 
+export interface ConversationTimeoutPayload {
+  conversationId: string;
+  reason: 'invite_timeout' | 'idle_timeout';
+}
+
 export type AgentStateChangedPayload = {
   state: string;
   position: unknown;
@@ -56,6 +61,15 @@ export type ActionFinishedPayload = {
   actionType: string;
   success: boolean;
   result: unknown;
+};
+
+export type AgentQueueRefillRequestedPayload = {
+  agentId: string;
+  playerId: string;
+  requestId: string;
+  remaining: number;
+  lastDequeuedAt?: number;
+  reason: 'empty' | 'low_watermark';
 };
 
 export type ConnectedMessage = WsMessageBase<
@@ -100,9 +114,17 @@ export type ConversationMessageEvent = WsWorldEventBase<
   ConversationMessagePayload
 >;
 
+export interface ConversationTimeoutEvent
+  extends WsWorldEventBase<'conversation.timeout', ConversationTimeoutPayload> {}
+
 export type ActionFinishedEvent = WsWorldEventBase<
   'action.finished',
   ActionFinishedPayload
+>;
+
+export type AgentQueueRefillRequestedEvent = WsWorldEventBase<
+  'agent.queue_refill_requested',
+  AgentQueueRefillRequestedPayload
 >;
 
 export type WorldEvent =
@@ -110,7 +132,9 @@ export type WorldEvent =
   | ConversationStartedEvent
   | ConversationInvitedEvent
   | ConversationMessageEvent
-  | ActionFinishedEvent;
+  | ConversationTimeoutEvent
+  | ActionFinishedEvent
+  | AgentQueueRefillRequestedEvent;
 
 export type MoveToCommand = WsMessageBase<'command.move_to', { targetPlayerId: string }>;
 
@@ -136,6 +160,11 @@ export type SetActivityCommand = WsMessageBase<
 
 export type AcceptInviteCommand = WsMessageBase<
   'command.accept_invite',
+  { conversationId: string; metadata?: Record<string, unknown> }
+>;
+
+export type RejectInviteCommand = WsMessageBase<
+  'command.reject_invite',
   { conversationId: string; metadata?: Record<string, unknown> }
 >;
 
@@ -171,6 +200,8 @@ export type CommandAck = {
   payload: {
     commandId: string;
     status: 'accepted' | 'rejected';
+    /** 语义标注：queued 表示仅“入队/受理成功”，不代表后端执行成功 */
+    ackSemantics: 'queued';
     reason?: string;
     inputId?: string;
   };
@@ -193,20 +224,42 @@ export type WsOutboundMessage =
   | ConversationStartedEvent
   | ConversationInvitedEvent
   | ConversationMessageEvent
+  | ConversationTimeoutEvent
   | ActionFinishedEvent
+  | AgentQueueRefillRequestedEvent
   | CommandAck
   | PingMessage;
+
+export type CommandBatchItem = {
+  id: string;
+  type: `command.${
+    | 'move_to'
+    | 'say'
+    | 'set_activity'
+    | 'accept_invite'
+    | 'reject_invite'
+    | 'invite'
+    | 'start_conversation'
+    | 'leave_conversation'
+    | 'continue_doing'
+    | 'do_something'}`;
+  payload: Record<string, unknown>;
+};
+
+export type CommandBatchMessage = WsMessageBase<'command.batch', { commands: CommandBatchItem[] }>;
 
 export type WsInboundMessage =
   | MoveToCommand
   | SayCommand
   | SetActivityCommand
   | AcceptInviteCommand
+  | RejectInviteCommand
   | InviteCommand
   | StartConversationCommand
   | LeaveConversationCommand
   | ContinueDoingCommand
   | DoSomethingCommand
+  | CommandBatchMessage
   | EventAck
   | PongMessage;
 

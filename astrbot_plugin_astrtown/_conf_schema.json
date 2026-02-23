@@ -1,0 +1,30 @@
+{
+  "astrtown_invite_decision_mode": {
+    "description": "邀请决策模式",
+    "type": "string",
+    "options": [
+      {"label": "自动接受", "value": "auto_accept"},
+      {"label": "LLM 判断", "value": "llm_judge"}
+    ],
+    "default": "auto_accept",
+    "hint": "收到对话邀请时的策略：auto_accept=自动接受不经LLM，llm_judge=交给LLM判断"
+  },
+  "astrtown_refill_wake_enabled": {
+    "description": "队列补充唤醒开关",
+    "type": "bool",
+    "default": true,
+    "hint": "是否允许 queue_refill_requested 事件唤醒 LLM"
+  },
+  "astrtown_refill_min_wake_interval_sec": {
+    "description": "队列补充最小唤醒间隔（秒）",
+    "type": "int",
+    "default": 30,
+    "hint": "queue_refill_requested 唤醒 LLM 的最小间隔（秒）"
+  },
+  "astrtown_max_context_rounds": {
+    "description": "最大上下文轮数",
+    "type": "int",
+    "default": 50,
+    "hint": "LLM 请求前保留的最大对话轮次数（1轮=user+assistant），插件侧裁剪 messages 使用"
+  }
+}

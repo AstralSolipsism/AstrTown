@@ -157,6 +157,19 @@ export class Conversation {
         ],
       }),
     );
+    const inviteeAgent = [...game.world.agents.values()].find((a) => a.playerId === invitee.id);
+    if (inviteeAgent) {
+      game.pendingOperations.push({
+        name: 'conversation.invited',
+        args: {
+          agentId: inviteeAgent.id,
+          worldId: game.worldId,
+          conversationId,
+          inviterId: player.id,
+          inviterName: game.playerDescriptions.get(player.id)?.name,
+        },
+      });
+    }
     return { conversationId };
   }
 
@@ -312,6 +325,7 @@ export const conversationInputs = {
       playerId,
       conversationId,
       timestamp: v.number(),
+      text: v.optional(v.string()),
     },
     handler: (game: Game, now: number, args): null => {
       const playerId = parseGameId('players', args.playerId);
@@ -325,6 +339,31 @@ export const conversationInputs = {
       }
       conversation.lastMessage = { author: playerId, timestamp: args.timestamp };
       conversation.numMessages++;
+
+      const messageContent = args.text;
+      if (typeof messageContent === 'string') {
+        for (const participantId of conversation.participants.keys()) {
+          if (participantId === playerId) {
+            continue;
+          }
+          const participantAgent = [...game.world.agents.values()].find(
+            (a) => a.playerId === participantId,
+          );
+          if (!participantAgent) {
+            continue;
+          }
+          game.pendingOperations.push({
+            name: 'conversation.message',
+            args: {
+              agentId: participantAgent.id,
+              worldId: game.worldId,
+              conversationId,
+              messageContent,
+              speakerId: playerId,
+            },
+          });
+        }
+      }
       return null;
     },
   }),

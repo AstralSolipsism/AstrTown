@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import ReactModal from 'react-modal';
 import { useNpcService } from '../hooks/useNpcService.tsx';
+import { useTranslation } from 'react-i18next';
 
 type NpcManageModalProps = {
   isOpen: boolean;
@@ -17,7 +18,17 @@ function maskToken(token: string): string {
 }
 
 export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: NpcManageModalProps) {
+  const { t } = useTranslation();
   const { npcs, isLoading, createNpc, getToken, resetToken, refreshList } = useNpcService();
+
+  const tokenStatusI18nKeyByValue: Record<'active' | 'inactive' | 'expired', string> = {
+    active: 'npcModal.tokenStatus.active',
+    inactive: 'npcModal.tokenStatus.inactive',
+    expired: 'npcModal.tokenStatus.expired',
+  };
+
+  const translateTokenStatus = (status: 'active' | 'inactive' | 'expired') =>
+    t(tokenStatusI18nKeyByValue[status]);
 
   const [createName, setCreateName] = useState('');
   const [createCharacter, setCreateCharacter] = useState('');
@@ -46,7 +57,7 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
         await refreshList();
       } catch (e) {
         if (canceled) return;
-        const message = e instanceof Error ? e.message : '加载 NPC 列表失败';
+        const message = e instanceof Error ? e.message : t('npcModal.loadListFailed');
         setError(message);
       }
     };
@@ -55,7 +66,7 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
     return () => {
       canceled = true;
     };
-  }, [isOpen, refreshList]);
+  }, [isOpen, refreshList, t]);
 
   const selectedNpc = useMemo(() => {
     if (!displayTokenId) return null;
@@ -68,7 +79,7 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
     try {
       await refreshList();
     } catch (e) {
-      const message = e instanceof Error ? e.message : '加载 NPC 列表失败';
+      const message = e instanceof Error ? e.message : t('npcModal.loadListFailed');
       setError(message);
     }
   };
@@ -78,7 +89,7 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
 
     const name = createName.trim();
     if (!name) {
-      setError('NPC 名称不能为空');
+      setError(t('npcModal.nameRequired'));
       return;
     }
 
@@ -94,7 +105,7 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
       setCreateCharacter('');
       await refreshList();
     } catch (e) {
-      const message = e instanceof Error ? e.message : '创建 NPC 失败';
+      const message = e instanceof Error ? e.message : t('npcModal.createFailed');
       setError(message);
     } finally {
       setIsCreating(false);
@@ -112,7 +123,7 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
       setDisplayTokenId(botTokenId);
       setShowPlainToken(false);
     } catch (e) {
-      const message = e instanceof Error ? e.message : '获取 Token 失败';
+      const message = e instanceof Error ? e.message : t('npcModal.getTokenFailed');
       setError(message);
     } finally {
       setPendingTokenId(null);
@@ -131,7 +142,7 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
       setShowPlainToken(false);
       await refreshList();
     } catch (e) {
-      const message = e instanceof Error ? e.message : '重置 Token 失败';
+      const message = e instanceof Error ? e.message : t('npcModal.resetTokenFailed');
       setError(message);
     } finally {
       setPendingTokenId(null);
@@ -144,9 +155,9 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
 
     try {
       await navigator.clipboard.writeText(displayToken);
-      setCopyMessage('Token 已复制');
+      setCopyMessage(t('npcModal.copySuccess'));
     } catch {
-      setError('复制失败，请手动复制');
+      setError(t('npcModal.copyFailed'));
     }
   };
 
@@ -155,21 +166,23 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
       isOpen={isOpen}
       onRequestClose={onRequestClose}
       style={modalStyle}
-      contentLabel="NPC manage modal"
+      contentLabel={t('npcModal.modalLabel')}
       ariaHideApp={false}
     >
       <div className="font-body w-[min(95vw,900px)] max-h-[80vh] overflow-y-auto">
-        <h2 className="text-center text-4xl sm:text-5xl font-bold font-display game-title mb-4">我的 NPC</h2>
+        <h2 className="text-center text-4xl sm:text-5xl font-bold font-display game-title mb-4">
+          {t('npcModal.title')}
+        </h2>
 
         <div className="mb-4 p-3 border border-slate-600 bg-slate-900/60">
-          <p className="text-sm mb-2">创建新 NPC</p>
+          <p className="text-sm mb-2">{t('npcModal.createSectionTitle')}</p>
           <div className="grid gap-2 sm:grid-cols-3">
             <input
               type="text"
               value={createName}
               onChange={(e) => setCreateName(e.target.value)}
               disabled={isCreating}
-              placeholder="NPC 名称"
+              placeholder={t('npcModal.namePlaceholder')}
               className="px-3 py-2 bg-slate-900 border border-slate-500 text-white outline-none focus:border-white"
             />
             <input
@@ -177,7 +190,7 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
               value={createCharacter}
               onChange={(e) => setCreateCharacter(e.target.value)}
               disabled={isCreating}
-              placeholder="character（可选）"
+              placeholder={t('npcModal.characterPlaceholder')}
               className="px-3 py-2 bg-slate-900 border border-slate-500 text-white outline-none focus:border-white"
             />
             <button
@@ -186,34 +199,38 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
               disabled={isCreating}
               className="px-3 py-2 border border-white bg-clay-700 text-white disabled:opacity-60"
             >
-              {isCreating ? '创建中...' : '创建 NPC'}
+              {isCreating ? t('npcModal.creatingButton') : t('npcModal.createButton')}
             </button>
           </div>
         </div>
 
         <div className="mb-4">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm">NPC 列表</p>
+            <p className="text-sm">{t('npcModal.listTitle')}</p>
             <button
               type="button"
               onClick={() => void handleRefreshList()}
               disabled={isLoading || !!pendingTokenId}
               className="px-3 py-1 border border-slate-400 text-slate-200 text-sm disabled:opacity-60"
             >
-              刷新
+              {t('npcModal.refresh')}
             </button>
           </div>
 
           <div className="border border-slate-700 divide-y divide-slate-700">
             {npcs.length === 0 ? (
-              <div className="p-3 text-sm text-slate-300">暂无 NPC</div>
+              <div className="p-3 text-sm text-slate-300">{t('npcModal.empty')}</div>
             ) : (
               npcs.map((npc) => (
                 <div key={npc.botTokenId} className="p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <p className="text-base text-white">{npc.name ?? '未命名 NPC'}</p>
-                    <p className="text-xs text-slate-300">agentId: {npc.agentId}</p>
-                    <p className="text-xs text-slate-300">状态: {npc.tokenStatus}</p>
+                    <p className="text-base text-white">{npc.name ?? t('npcModal.unnamed')}</p>
+                    <p className="text-xs text-slate-300">
+                      {t('npcModal.agentId')}: {npc.agentId}
+                    </p>
+                    <p className="text-xs text-slate-300">
+                      {t('npcModal.status')}: {translateTokenStatus(npc.tokenStatus)}
+                    </p>
                   </div>
                   <div className="flex gap-2">
                     <button
@@ -222,7 +239,9 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
                       disabled={pendingTokenId === npc.botTokenId}
                       className="px-3 py-1 border border-slate-400 text-slate-100 text-sm disabled:opacity-60"
                     >
-                      {pendingTokenId === npc.botTokenId ? '读取中...' : '查看 Token'}
+                      {pendingTokenId === npc.botTokenId
+                        ? t('npcModal.loadingToken')
+                        : t('npcModal.viewToken')}
                     </button>
                     <button
                       type="button"
@@ -230,7 +249,9 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
                       disabled={pendingTokenId === npc.botTokenId}
                       className="px-3 py-1 border border-white bg-clay-700 text-white text-sm disabled:opacity-60"
                     >
-                      {pendingTokenId === npc.botTokenId ? '重置中...' : '重置 Token'}
+                      {pendingTokenId === npc.botTokenId
+                        ? t('npcModal.resettingToken')
+                        : t('npcModal.resetToken')}
                     </button>
                   </div>
                 </div>
@@ -240,10 +261,14 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
         </div>
 
         <div className="p-3 border border-slate-600 bg-slate-900/50">
-          <p className="text-sm mb-2">Token 展示</p>
+          <p className="text-sm mb-2">{t('npcModal.tokenSectionTitle')}</p>
           <div className="flex items-center gap-2 flex-wrap">
             <code className="block px-3 py-2 bg-black/50 border border-slate-700 text-green-300 break-all min-h-[42px] flex-1">
-              {displayToken ? (showPlainToken ? displayToken : maskToken(displayToken)) : '尚未选择 Token'}
+              {displayToken
+                ? showPlainToken
+                  ? displayToken
+                  : maskToken(displayToken)
+                : t('npcModal.tokenNotSelected')}
             </code>
             <button
               type="button"
@@ -251,7 +276,7 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
               disabled={!displayToken}
               className="px-3 py-2 border border-slate-400 text-slate-100 text-sm disabled:opacity-50"
             >
-              {showPlainToken ? '隐藏' : '显示'}
+              {showPlainToken ? t('npcModal.hide') : t('npcModal.show')}
             </button>
             <button
               type="button"
@@ -259,10 +284,14 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
               disabled={!displayToken}
               className="px-3 py-2 border border-white bg-clay-700 text-white text-sm disabled:opacity-50"
             >
-              复制
+              {t('npcModal.copy')}
             </button>
           </div>
-          {selectedNpc ? <p className="text-xs text-slate-400 mt-2">当前 NPC: {selectedNpc.name ?? selectedNpc.agentId}</p> : null}
+          {selectedNpc ? (
+            <p className="text-xs text-slate-400 mt-2">
+              {t('npcModal.currentNpc')}: {selectedNpc.name ?? selectedNpc.agentId}
+            </p>
+          ) : null}
           {copyMessage ? <p className="text-green-400 text-sm mt-2">{copyMessage}</p> : null}
         </div>
 
@@ -274,7 +303,7 @@ export default function NpcManageModal({ isOpen, onRequestClose, modalStyle }: N
             onClick={onRequestClose}
             className="px-4 py-2 border border-slate-400 text-slate-100"
           >
-            关闭
+            {t('npcModal.close')}
           </button>
         </div>
       </div>

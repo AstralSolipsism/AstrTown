@@ -1,0 +1,6 @@
+name: astrbot-plugin-astrtown
+# NOTE: AstrBot StarManager expects 'desc' (or 'description' which will be mapped to 'desc')
+desc: "AstrTown 平台适配插件，通过 Gateway 让 AstrBot 控制 NPC 并接收事件"
+author: AstrTown
+version: "0.1.0"
+repo: https://github.com/your-org/astrbot_plugin_astrtown

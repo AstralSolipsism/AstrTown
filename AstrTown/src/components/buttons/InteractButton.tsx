@@ -6,10 +6,12 @@ import { api } from '../../../convex/_generated/api';
 import { ConvexError } from 'convex/values';
 import { Id } from '../../../convex/_generated/dataModel';
 import { useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { waitForInput } from '../../hooks/sendInput';
 import { useServerGame } from '../../hooks/serverGame';
 
 export default function InteractButton() {
+  const { t } = useTranslation();
   const worldStatus = useQuery(api.world.defaultWorldStatus);
   const worldId = worldStatus?.worldId;
   const game = useServerGame(worldId);
@@ -59,7 +61,7 @@ export default function InteractButton() {
   };
   return (
     <Button imgUrl={interactImg} onClick={joinOrLeaveGame}>
-      {isPlaying ? 'Leave' : 'Interact'}
+      {isPlaying ? t('interact.leave') : t('interact.interact')}
     </Button>
   );
 }

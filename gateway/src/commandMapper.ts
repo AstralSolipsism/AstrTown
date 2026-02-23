@@ -1,10 +1,13 @@
 import type { EventPriority, MoveToCommand } from './types.js';
+import type { PostCommandBatchEvent } from './astrtownClient.js';
+import { createUuid } from './uuid.js';
 
 export type CommandType =
   | 'move_to'
   | 'say'
   | 'set_activity'
   | 'accept_invite'
+  | 'reject_invite'
   | 'invite'
   | 'start_conversation'
   | 'leave_conversation'
@@ -16,6 +19,8 @@ export type AstrTownCommandRequest = {
   commandType: CommandType;
   args: unknown;
 };
+
+export type ExternalEventItem = PostCommandBatchEvent;
 
 export type CommandMapping = {
   commandType: CommandType;
@@ -32,6 +37,25 @@ export class CommandMapper {
 
   get(commandType: CommandType): CommandMapping | undefined {
     return this.mappings.get(commandType);
+  }
+
+  mapToExternalEvent(commandType: CommandType, payload: unknown): ExternalEventItem {
+    const mapping = this.get(commandType);
+    if (!mapping) {
+      throw new Error(`Unknown commandType: ${commandType}`);
+    }
+
+    const request = mapping.buildRequest(payload);
+    return {
+      eventId: createUuid(),
+      kind: request.commandType,
+      args: request.args as Record<string, any>,
+      priority: mapping.defaultPriority,
+    };
+  }
+
+  mapBatchToExternalEvents(items: Array<{ commandType: CommandType; payload: unknown }>): ExternalEventItem[] {
+    return items.map((item) => this.mapToExternalEvent(item.commandType, item.payload));
   }
 }
 
@@ -80,9 +104,24 @@ export function createDefaultCommandMapper(): CommandMapper {
 
   mapper.register({
     commandType: 'accept_invite',
+    // 邀请响应必须进入优先队列，否则 NPC 在 invited 状态下不会消费普通队列中的 accept/reject。
+    defaultPriority: 1,
     buildRequest: (payload) => ({
       agentId: (payload as any)?.agentId,
       commandType: 'accept_invite',
+      args: {
+        conversationId: (payload as any)?.conversationId,
+      },
+    }),
+  });
+
+  mapper.register({
+    commandType: 'reject_invite',
+    // 与 accept_invite 保持一致，确保 invited 分支可及时消费。
+    defaultPriority: 1,
+    buildRequest: (payload) => ({
+      agentId: (payload as any)?.agentId,
+      commandType: 'reject_invite',
       args: {
         conversationId: (payload as any)?.conversationId,
       },
@@ -94,10 +133,7 @@ export function createDefaultCommandMapper(): CommandMapper {
     buildRequest: (payload) => ({
       agentId: (payload as any)?.agentId,
       commandType: 'do_something',
-      args: {
-        actionType: (payload as any)?.actionType,
-        args: (payload as any)?.args,
-      },
+      args: (payload as any)?.args,
     }),
   });
 

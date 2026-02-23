@@ -6,26 +6,72 @@ import { movePlayer } from './movement';
 import { inputHandler } from './inputHandler';
 import { point } from '../util/types';
 import { Descriptions } from '../../data/characters';
-import { AgentDescription } from './agentDescription';
-import { Agent } from './agent';
+import { Agent, createDefaultExternalQueueState, externalEventItemValidator } from './agent';
+import { EXTERNAL_QUEUE_MAX_SIZE } from '../constants';
+
+function resetExternalQueueRuntimeState(agent: Agent) {
+  agent.externalQueueState = createDefaultExternalQueueState();
+}
 
 export const agentInputs = {
-  setExternalControl: inputHandler({
+  enqueueExternalEvents: inputHandler({
     args: {
       agentId,
-      enabled: v.boolean(),
+      events: v.array(externalEventItemValidator),
     },
-    handler: (game, now, args) => {
+    handler: (game, _now, args) => {
       const parsedAgentId = parseGameId('agents', args.agentId);
       const agent = game.world.agents.get(parsedAgentId);
       if (!agent) {
         throw new Error(`Couldn't find agent: ${parsedAgentId}`);
       }
-      agent.isExternalControlled = args.enabled;
-      agent.externalControlSince = args.enabled ? now : undefined;
-      if (!args.enabled && agent.inProgressOperation) {
-        delete agent.inProgressOperation;
+
+      for (const event of args.events) {
+        if (event.priority < 2) {
+          agent.externalPriorityQueue.push(event);
+        } else {
+          agent.externalEventQueue.push(event);
+        }
       }
+
+      const overflow =
+        agent.externalPriorityQueue.length + agent.externalEventQueue.length - EXTERNAL_QUEUE_MAX_SIZE;
+      if (overflow > 0) {
+        if (agent.externalEventQueue.length >= overflow) {
+          agent.externalEventQueue.splice(0, overflow);
+        } else {
+          const remaining = overflow - agent.externalEventQueue.length;
+          agent.externalEventQueue = [];
+          if (remaining > 0) {
+            agent.externalPriorityQueue.splice(0, remaining);
+          }
+        }
+      }
+
+      agent.externalQueueState.idle.mode = 'active';
+      delete agent.externalQueueState.idle.sleepingSince;
+      agent.externalQueueState.idle.consecutivePrefetchMisses = 0;
+      agent.externalQueueState.prefetch.waiting = false;
+      agent.externalQueueState.prefetch.dispatched = false;
+      agent.externalQueueState.prefetch.retries = 0;
+      delete agent.externalQueueState.prefetch.requestId;
+      delete agent.externalQueueState.prefetch.requestedAt;
+      return null;
+    },
+  }),
+  clearExternalQueue: inputHandler({
+    args: {
+      agentId,
+    },
+    handler: (game, _now, args) => {
+      const parsedAgentId = parseGameId('agents', args.agentId);
+      const agent = game.world.agents.get(parsedAgentId);
+      if (!agent) {
+        throw new Error(`Couldn't find agent: ${parsedAgentId}`);
+      }
+      agent.externalEventQueue = [];
+      agent.externalPriorityQueue = [];
+      resetExternalQueueRuntimeState(agent);
       return null;
     },
   }),
@@ -66,14 +112,15 @@ export const agentInputs = {
       if (!agent) {
         throw new Error(`Couldn't find agent: ${agentId}`);
       }
+
       const operationMismatch =
-        !agent.inProgressOperation ||
-        (!agent.isExternalControlled && agent.inProgressOperation.operationId !== args.operationId);
+        !agent.inProgressOperation || agent.inProgressOperation.operationId !== args.operationId;
       if (operationMismatch) {
         console.debug(`Agent ${agentId} didn't have ${args.operationId} in progress`);
         return null;
       }
       delete agent.inProgressOperation;
+
       const player = game.world.players.get(agent.playerId)!;
       if (args.invitee) {
         const inviteeId = parseGameId('players', args.invitee);
@@ -88,49 +135,11 @@ export const agentInputs = {
         movePlayer(game, now, player, args.destination);
       }
       if (args.activity) {
-        player.activity = args.activity;
-      }
-      return null;
-    },
-  }),
-  agentFinishSendingMessage: inputHandler({
-    args: {
-      agentId,
-      conversationId,
-      timestamp: v.number(),
-      operationId: v.string(),
-      leaveConversation: v.boolean(),
-    },
-    handler: (game, now, args) => {
-      const agentId = parseGameId('agents', args.agentId);
-      const agent = game.world.agents.get(agentId);
-      if (!agent) {
-        throw new Error(`Couldn't find agent: ${agentId}`);
-      }
-      const player = game.world.players.get(agent.playerId);
-      if (!player) {
-        throw new Error(`Couldn't find player: ${agent.playerId}`);
-      }
-      const conversationId = parseGameId('conversations', args.conversationId);
-      const conversation = game.world.conversations.get(conversationId);
-      if (!conversation) {
-        throw new Error(`Couldn't find conversation: ${conversationId}`);
-      }
-      if (
-        !agent.inProgressOperation ||
-        agent.inProgressOperation.operationId !== args.operationId
-      ) {
-        console.debug(`Agent ${agentId} wasn't sending a message ${args.operationId}`);
-        return null;
-      }
-      delete agent.inProgressOperation;
-      conversationInputs.finishSendingMessage.handler(game, now, {
-        playerId: agent.playerId,
-        conversationId: args.conversationId,
-        timestamp: args.timestamp,
-      });
-      if (args.leaveConversation) {
-        conversation.leave(game, now, player);
+        player.activity = {
+          ...args.activity,
+          started: Date.now(),
+          actionId: args.operationId,
+        };
       }
       return null;
     },
@@ -139,6 +148,7 @@ export const agentInputs = {
     args: {
       agentId,
       conversationId,
+      text: v.optional(v.string()),
       timestamp: v.number(),
       leaveConversation: v.boolean(),
     },
@@ -160,6 +170,7 @@ export const agentInputs = {
       conversationInputs.finishSendingMessage.handler(game, now, {
         playerId: agent.playerId,
         conversationId: args.conversationId,
+        text: args.text,
         timestamp: args.timestamp,
       });
       if (args.leaveConversation) {
@@ -191,14 +202,9 @@ export const agentInputs = {
           lastConversation: undefined,
           lastInviteAttempt: undefined,
           toRemember: undefined,
-        }),
-      );
-      game.agentDescriptions.set(
-        agentId,
-        new AgentDescription({
-          agentId: agentId,
-          identity: description.identity,
-          plan: description.plan,
+          externalEventQueue: [],
+          externalPriorityQueue: [],
+          externalQueueState: createDefaultExternalQueueState(),
         }),
       );
       return { agentId };

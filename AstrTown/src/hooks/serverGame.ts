@@ -1,5 +1,4 @@
 import { GameId } from '../../convex/aiTown/ids.ts';
-import { AgentDescription } from '../../convex/aiTown/agentDescription.ts';
 import { PlayerDescription } from '../../convex/aiTown/playerDescription.ts';
 import { World } from '../../convex/aiTown/world.ts';
 import { WorldMap } from '../../convex/aiTown/worldMap.ts';
@@ -12,7 +11,6 @@ import { parseMap } from '../../convex/util/object.ts';
 export type ServerGame = {
   world: World;
   playerDescriptions: Map<GameId<'players'>, PlayerDescription>;
-  agentDescriptions: Map<GameId<'agents'>, AgentDescription>;
   worldMap: WorldMap;
 };
 
@@ -27,15 +25,10 @@ export function useServerGame(worldId: Id<'worlds'> | undefined): ServerGame | u
     }
     return {
       world: new World(worldState.world),
-      agentDescriptions: parseMap(
-        descriptions.agentDescriptions,
-        AgentDescription,
-        (p) => p.agentId,
-      ),
       playerDescriptions: parseMap(
         descriptions.playerDescriptions,
         PlayerDescription,
-        (p) => p.playerId,
+        (p: any) => p.playerId,
       ),
       worldMap: new WorldMap(descriptions.worldMap),
     };

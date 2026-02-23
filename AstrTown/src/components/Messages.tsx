@@ -6,6 +6,7 @@ import { MessageInput } from './MessageInput';
 import { Player } from '../../convex/aiTown/player';
 import { Conversation } from '../../convex/aiTown/conversation';
 import { useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 
 export function Messages({
   worldId,
@@ -24,6 +25,7 @@ export function Messages({
   humanPlayer?: Player;
   scrollViewRef: React.RefObject<HTMLDivElement>;
 }) {
+  const { t } = useTranslation();
   const humanPlayerId = humanPlayer?.id;
   const descriptions = useQuery(api.world.gameDescriptions, { worldId });
   const messages = useQuery(api.messages.listMessages, {
@@ -71,14 +73,16 @@ export function Messages({
   const messageNodes: { time: number; node: React.ReactNode }[] = messages.map((m) => {
     const node = (
       <div key={`text-${m._id}`} className="leading-tight mb-6">
-        <div className="flex gap-4">
-          <span className="uppercase flex-grow">{m.authorName}</span>
-          <time dateTime={m._creationTime.toString()}>
+        <div className="flex flex-wrap gap-2 sm:gap-4">
+          <span className="uppercase flex-grow min-w-0 break-all">{m.authorName}</span>
+          <time className="text-xs sm:text-sm shrink-0" dateTime={m._creationTime.toString()}>
             {new Date(m._creationTime).toLocaleString()}
           </time>
         </div>
         <div className={clsx('bubble', m.author === humanPlayerId && 'bubble-mine')}>
-          <p className="bg-white -mx-3 -my-1">{m.text}</p>
+          <p className="bg-white -mx-3 -my-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+            {m.text}
+          </p>
         </div>
       </div>
     );
@@ -99,8 +103,8 @@ export function Messages({
         membershipNodes.push({
           node: (
             <div key={`joined-${playerId}`} className="leading-tight mb-6">
-              <p className="text-brown-700 text-center">{playerName} joined the conversation.</p>
-            </div>
+              <p className="text-brown-700 text-center">{t('messages.joinedConversation', { playerName })}</p>
+</div>
           ),
           time: started,
         });
@@ -114,8 +118,8 @@ export function Messages({
       membershipNodes.push({
         node: (
           <div key={`joined-${playerId}`} className="leading-tight mb-6">
-            <p className="text-brown-700 text-center">{playerName} joined the conversation.</p>
-          </div>
+              <p className="text-brown-700 text-center">{t('messages.joinedConversation', { playerName })}</p>
+</div>
         ),
         time: started,
       });
@@ -123,7 +127,7 @@ export function Messages({
       membershipNodes.push({
         node: (
           <div key={`left-${playerId}`} className="leading-tight mb-6">
-            <p className="text-brown-700 text-center">{playerName} left the conversation.</p>
+            <p className="text-brown-700 text-center">{t('messages.leftConversation', { playerName })}</p>
           </div>
         ),
         // Always sort all "left" messages after the last message.
@@ -140,15 +144,15 @@ export function Messages({
         {nodes.length > 0 && nodes.map((n) => n.node)}
         {currentlyTyping && currentlyTyping.playerId !== humanPlayerId && (
           <div key="typing" className="leading-tight mb-6">
-            <div className="flex gap-4">
-              <span className="uppercase flex-grow">{currentlyTypingName}</span>
-              <time dateTime={currentlyTyping.since.toString()}>
+            <div className="flex flex-wrap gap-2 sm:gap-4">
+              <span className="uppercase flex-grow min-w-0 break-all">{currentlyTypingName}</span>
+              <time className="text-xs sm:text-sm shrink-0" dateTime={currentlyTyping.since.toString()}>
                 {new Date(currentlyTyping.since).toLocaleString()}
               </time>
             </div>
             <div className={clsx('bubble')}>
-              <p className="bg-white -mx-3 -my-1">
-                <i>typing...</i>
+              <p className="bg-white -mx-3 -my-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                <i>{t('messages.typing')}</i>
               </p>
             </div>
           </div>

@@ -7,6 +7,9 @@ import * as gentlewaterfall from '../../data/animations/gentlewaterfall.json';
 import * as gentlesplash from '../../data/animations/gentlesplash.json';
 import * as windmill from '../../data/animations/windmill.json';
 
+// 模块级别精灵表缓存，以纹理 URL 为 key，避免重复解析导致纹理重复添加到缓存
+const spritesheetCache = new Map<string, Promise<PIXI.Spritesheet>>();
+
 const animations = {
   'campfire.json': { spritesheet: campfire, url: '/ai-town/assets/spritesheets/campfire.png' },
   'gentlesparkle.json': {
@@ -81,11 +84,15 @@ export const PixiStaticMap = PixiComponent('StaticMap', {
         continue;
       }
       const { spritesheet, url } = animation;
-      const texture = PIXI.BaseTexture.from(url, {
-        scaleMode: PIXI.SCALE_MODES.NEAREST,
-      });
-      const spriteSheet = new PIXI.Spritesheet(texture, spritesheet);
-      spriteSheet.parse().then(() => {
+      // 使用缓存避免重复解析同一精灵表，防止纹理重复添加到 TextureCache
+      if (!spritesheetCache.has(url)) {
+        const texture = PIXI.BaseTexture.from(url, {
+          scaleMode: PIXI.SCALE_MODES.NEAREST,
+        });
+        const sheetObj = new PIXI.Spritesheet(texture, spritesheet);
+        spritesheetCache.set(url, sheetObj.parse().then(() => sheetObj));
+      }
+      void spritesheetCache.get(url)!.then((spriteSheet) => {
         for (const sprite of sprites) {
           const pixiAnimation = spriteSheet.animations[sprite.animation];
           if (!pixiAnimation) {
@@ -109,7 +116,7 @@ export const PixiStaticMap = PixiComponent('StaticMap', {
     container.y = 0;
 
     // Set the hit area manually to ensure `pointerdown` events are delivered to this container.
-    container.interactive = true;
+    container.eventMode = 'static';
     container.hitArea = new PIXI.Rectangle(
       0,
       0,

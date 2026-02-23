@@ -21,6 +21,24 @@ export type PostCommandResponse =
   | { status: 'accepted'; inputId: string }
   | { status: 'rejected'; code: string; message: string };
 
+export type PostCommandEnqueueMode = 'immediate' | 'queue';
+
+export type PostCommandBatchEvent = {
+  eventId: string;
+  kind: string;
+  args: Record<string, any>;
+  priority?: number;
+  expiresAt?: number;
+};
+
+export type PostCommandBatchArgs = {
+  token: string;
+  idempotencyKey: string;
+  worldId: string;
+  agentId: string;
+  events: PostCommandBatchEvent[];
+};
+
 export type UpdateDescriptionResponse = {
   ok: boolean;
   error?: string;
@@ -94,9 +112,19 @@ export class AstrTownClient {
     agentId: string;
     commandType: string;
     args: unknown;
+    enqueueMode?: PostCommandEnqueueMode;
   }): Promise<PostCommandResponse> {
     let res: Response;
     try {
+      const requestBody: Record<string, unknown> = {
+        agentId: args.agentId,
+        commandType: args.commandType,
+        args: args.args,
+      };
+      if (args.enqueueMode !== undefined) {
+        requestBody.enqueueMode = args.enqueueMode;
+      }
+
       res = await this.fetchFn(`${this.baseUrl}/api/bot/command`, {
         method: 'POST',
         headers: {
@@ -104,7 +132,7 @@ export class AstrTownClient {
           authorization: `Bearer ${args.token}`,
           'x-idempotency-key': args.idempotencyKey,
         },
-        body: JSON.stringify({ agentId: args.agentId, commandType: args.commandType, args: args.args }),
+        body: JSON.stringify(requestBody),
       });
     } catch (e: any) {
       return {
@@ -126,16 +154,21 @@ export class AstrTownClient {
     return { status: 'accepted', inputId: String(json?.inputId ?? '') };
   }
 
-  async setExternalControl(token: string, enabled: boolean): Promise<void> {
+  async postCommandBatch(args: PostCommandBatchArgs): Promise<void> {
     let res: Response;
     try {
-      res = await this.fetchFn(`${this.baseUrl}/api/bot/control`, {
+      res = await this.fetchFn(`${this.baseUrl}/api/bot/command/batch`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          authorization: `Bearer ${token}`,
+          authorization: `Bearer ${args.token}`,
+          'x-idempotency-key': args.idempotencyKey,
         },
-        body: JSON.stringify({ enabled }),
+        body: JSON.stringify({
+          worldId: args.worldId,
+          agentId: args.agentId,
+          events: args.events,
+        }),
       });
     } catch (e: any) {
       throw new Error(String(e?.message ?? e ?? 'Network error'));
@@ -143,8 +176,8 @@ export class AstrTownClient {
 
     if (!res.ok) {
       const json = (await res.json().catch(() => ({}))) as any;
-      const code = String(json?.code ?? 'CONTROL_FAILED');
-      const message = String(json?.message ?? `setExternalControl failed with status ${res.status}`);
+      const code = String(json?.code ?? 'COMMAND_BATCH_REJECTED');
+      const message = String(json?.message ?? `postCommandBatch failed with status ${res.status}`);
       throw new Error(`${code}: ${message}`);
     }
   }

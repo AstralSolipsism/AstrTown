@@ -76,3 +76,11 @@ export const ENGINE_ACTION_DURATION = 30000;
 export const MAX_PATHFINDS_PER_STEP = 16;
 
 export const DEFAULT_NAME = 'Me';
+
+// 外控NPC事件队列相关常量
+export const EXTERNAL_QUEUE_LOW_WATERMARK = 2; // 队列剩余事件数低于此值时触发预取
+export const EXTERNAL_QUEUE_PREFETCH_TIMEOUT = 30_000; // 预取请求超时时间(ms)
+export const EXTERNAL_QUEUE_PREFETCH_MIN_INTERVAL = 10_000; // 预取请求最小间隔(ms)
+export const EXTERNAL_QUEUE_LEAVE_THRESHOLD = 3; // 连续预取失败次数达到此值后触发离场
+export const EXTERNAL_QUEUE_SLEEP_WINDOW = 60_000; // 休眠窗口时间(ms)
+export const EXTERNAL_QUEUE_MAX_SIZE = 50; // 队列最大容量

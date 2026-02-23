@@ -6,9 +6,11 @@ import { SelectElement } from './Player';
 import { Messages } from './Messages';
 import { toastOnError } from '../toasts';
 import { useSendInput } from '../hooks/sendInput';
-import { Player } from '../../convex/aiTown/player';
 import { GameId } from '../../convex/aiTown/ids';
 import { ServerGame } from '../hooks/serverGame';
+import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import NpcHistoryDrawer from './NpcHistoryDrawer';
 
 export default function PlayerDetails({
   worldId,
@@ -25,6 +27,7 @@ export default function PlayerDetails({
   setSelectedElement: SelectElement;
   scrollViewRef: React.RefObject<HTMLDivElement>;
 }) {
+  const { t } = useTranslation();
   const humanTokenIdentifier = useQuery(api.world.userStatus, { worldId });
 
   const players = [...game.world.players.values()];
@@ -41,7 +44,7 @@ export default function PlayerDetails({
   const player = playerId && game.world.players.get(playerId);
   const playerConversation = player && game.world.playerConversation(player);
   const playerAgent = player && [...game.world.agents.values()].find((a) => a.playerId === player.id);
-  const isExternalControlledNpc = !!playerAgent?.isExternalControlled;
+  const isExternalControlledNpc = !!playerAgent;
 
   const previousConversation = useQuery(
     api.world.previousConversation,
@@ -49,6 +52,7 @@ export default function PlayerDetails({
   );
 
   const playerDescription = playerId && game.playerDescriptions.get(playerId);
+  const [npcHistoryOpen, setNpcHistoryOpen] = useState(false);
 
   const startConversation = useSendInput(engineId, 'startConversation');
   const acceptInvite = useSendInput(engineId, 'acceptInvite');
@@ -58,7 +62,7 @@ export default function PlayerDetails({
   if (!playerId) {
     return (
       <div className="h-full text-xl flex text-center items-center p-4">
-        Click on an agent on the map to see chat history.
+        {t('playerDetails.clickAgentHint')}
       </div>
     );
   }
@@ -129,8 +133,25 @@ export default function PlayerDetails({
       }),
     );
   };
+
+  const openNpcHistory = () => setNpcHistoryOpen(true);
+  const closeNpcHistory = () => setNpcHistoryOpen(false);
   // const pendingSuffix = (inputName: string) =>
   //   [...inflightInputs.values()].find((i) => i.name === inputName) ? ' opacity-50' : '';
+
+  const activityDescriptionI18nKeyByValue: Record<string, string> = {
+    'reading a book': 'playerDetails.activity.readingBook',
+    daydreaming: 'playerDetails.activity.daydreaming',
+    gardening: 'playerDetails.activity.gardening',
+    walking: 'playerDetails.activity.walking',
+    idle: 'playerDetails.activity.idle',
+  };
+
+  const translateActivityDescription = (activityDescription: string) => {
+    const normalizedDescription = activityDescription.trim().toLowerCase();
+    const i18nKey = activityDescriptionI18nKeyByValue[normalizedDescription];
+    return i18nKey ? t(i18nKey) : activityDescription;
+  };
 
   const pendingSuffix = (s: string) => '';
   return (
@@ -159,21 +180,21 @@ export default function PlayerDetails({
           onClick={onStartConversation}
         >
           <div className="h-full bg-clay-700 text-center">
-            <span>Start conversation</span>
+            <span>{t('playerDetails.startConversation')}</span>
           </div>
         </a>
       )}
       {waitingForAccept && (
         <a className="mt-6 button text-white shadow-solid text-xl cursor-pointer pointer-events-auto opacity-50">
           <div className="h-full bg-clay-700 text-center">
-            <span>Waiting for accept...</span>
+            <span>{t('playerDetails.waitingForAccept')}</span>
           </div>
         </a>
       )}
       {waitingForNearby && (
         <a className="mt-6 button text-white shadow-solid text-xl cursor-pointer pointer-events-auto opacity-50">
           <div className="h-full bg-clay-700 text-center">
-            <span>Walking over...</span>
+            <span>{t('playerDetails.walkingOver')}</span>
           </div>
         </a>
       )}
@@ -186,7 +207,17 @@ export default function PlayerDetails({
           onClick={onLeaveConversation}
         >
           <div className="h-full bg-clay-700 text-center">
-            <span>Leave conversation</span>
+            <span>{t('playerDetails.leaveConversation')}</span>
+          </div>
+        </a>
+      )}
+      {isExternalControlledNpc && (
+        <a
+          className="mt-6 button text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
+          onClick={openNpcHistory}
+        >
+          <div className="h-full bg-clay-700 text-center">
+            <span>{t('npcHistory.viewHistory')}</span>
           </div>
         </a>
       )}
@@ -200,7 +231,7 @@ export default function PlayerDetails({
             onClick={onAcceptInvite}
           >
             <div className="h-full bg-clay-700 text-center">
-              <span>Accept</span>
+              <span>{t('playerDetails.accept')}</span>
             </div>
           </a>
           <a
@@ -211,7 +242,7 @@ export default function PlayerDetails({
             onClick={onRejectInvite}
           >
             <div className="h-full bg-clay-700 text-center">
-              <span>Reject</span>
+              <span>{t('playerDetails.reject')}</span>
             </div>
           </a>
         </>
@@ -219,18 +250,18 @@ export default function PlayerDetails({
       {!playerConversation && player.activity && player.activity.until > Date.now() && (
         <div className="box flex-grow mt-6">
           <h2 className="bg-brown-700 text-base sm:text-lg text-center">
-            {player.activity.description}
+            {translateActivityDescription(player.activity.description)}
           </h2>
         </div>
       )}
       <div className="desc my-6">
         <p className="leading-tight -m-4 bg-brown-700 text-base sm:text-sm">
           {!isMe && playerDescription?.description}
-          {isMe && <i>This is you!</i>}
+          {isMe && <i>{t('playerDetails.thisIsYou')}</i>}
           {!isMe && inConversationWithMe && (
             <>
               <br />
-              <br />(<i>Conversing with you!</i>)
+              <br />(<i>{t('playerDetails.conversingWithYou')}</i>)
             </>
           )}
         </p>
@@ -248,7 +279,7 @@ export default function PlayerDetails({
       {!playerConversation && previousConversation && (
         <>
           <div className="box flex-grow">
-            <h2 className="bg-brown-700 text-lg text-center">Previous conversation</h2>
+            <h2 className="bg-brown-700 text-lg text-center">{t('playerDetails.previousConversation')}</h2>
           </div>
           <Messages
             worldId={worldId}
@@ -259,6 +290,14 @@ export default function PlayerDetails({
             scrollViewRef={scrollViewRef}
           />
         </>
+      )}
+      {isExternalControlledNpc && player && (
+        <NpcHistoryDrawer
+          isOpen={npcHistoryOpen}
+          onClose={closeNpcHistory}
+          worldId={worldId}
+          npcPlayerId={player.id}
+        />
       )}
     </>
   );

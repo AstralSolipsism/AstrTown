@@ -12,7 +12,7 @@ export const inputs = {
   ...playerInputs,
   // Inputs for the messaging layer.
   ...conversationInputs,
-  // Inputs for the agent layer.
+  // agent层输入（包含外控队列 enqueueExternalEvents / clearExternalQueue）。
   ...agentInputs,
 };
 export type Inputs = typeof inputs;

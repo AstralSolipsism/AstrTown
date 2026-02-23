@@ -2,6 +2,7 @@ services:
   frontend:
     build: .
     restart: unless-stopped
+    command: sh -c "npm install --no-audit --no-fund && npx vite --host"
     ports:
       - '40009:5173'
     volumes:
@@ -84,6 +85,7 @@ services:
     entrypoint: ["sh", "-c"]
     command:
       - |
+        npm install --no-audit --no-fund &&
         if [ -z "$$CONVEX_SELF_HOSTED_ADMIN_KEY" ]; then
           echo "⚠️  CONVEX_ADMIN_KEY 未设置，跳过 Convex 环境变量初始化"
           echo "请先执行: docker compose exec backend ./generate_admin_key.sh"
@@ -96,6 +98,18 @@ services:
         npx convex env set BOT_ADMIN_SECRET "${BOT_ADMIN_SECRET}" &&
         echo "✅ Convex 环境变量初始化完成"
     restart: "no"
+    networks:
+      - astrtowndev
+
+  level-editor:
+    build: .
+    restart: unless-stopped
+    command: sh -c "npm install --no-audit --no-fund && npx vite src/editor/ --host --port 5174 --base=/map-editor/"
+    ports:
+      - '40011:5174'
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
     networks:
       - astrtowndev
 

@@ -25,13 +25,11 @@ import {
 } from '../engine/abstractGame';
 import { internal } from '../_generated/api';
 import { HistoricalObject } from '../engine/historicalObject';
-import { AgentDescription, serializedAgentDescription } from './agentDescription';
 import { parseMap, serializeMap } from '../util/object';
 
 const gameState = v.object({
   world: v.object(serializedWorld),
   playerDescriptions: v.array(v.object(serializedPlayerDescription)),
-  agentDescriptions: v.array(v.object(serializedAgentDescription)),
   worldMap: v.object(serializedWorldMap),
 });
 type GameState = Infer<typeof gameState>;
@@ -39,7 +37,6 @@ type GameState = Infer<typeof gameState>;
 const gameStateDiff = v.object({
   world: v.object(serializedWorld),
   playerDescriptions: v.optional(v.array(v.object(serializedPlayerDescription))),
-  agentDescriptions: v.optional(v.array(v.object(serializedAgentDescription))),
   worldMap: v.optional(v.object(serializedWorldMap)),
   agentOperations: v.array(v.object({ name: v.string(), args: v.any() })),
 });
@@ -58,7 +55,6 @@ export class Game extends AbstractGame {
   descriptionsModified: boolean;
   worldMap: WorldMap;
   playerDescriptions: Map<GameId<'players'>, PlayerDescription>;
-  agentDescriptions: Map<GameId<'agents'>, AgentDescription>;
 
   pendingOperations: Array<{ name: string; args: any }> = [];
 
@@ -76,7 +72,6 @@ export class Game extends AbstractGame {
 
     this.descriptionsModified = false;
     this.worldMap = new WorldMap(state.worldMap);
-    this.agentDescriptions = parseMap(state.agentDescriptions, AgentDescription, (a) => a.agentId);
     this.playerDescriptions = parseMap(
       state.playerDescriptions,
       PlayerDescription,
@@ -109,10 +104,6 @@ export class Game extends AbstractGame {
       .query('playerDescriptions')
       .withIndex('worldId', (q) => q.eq('worldId', worldId))
       .collect();
-    const agentDescriptionsDocs = await db
-      .query('agentDescriptions')
-      .withIndex('worldId', (q) => q.eq('worldId', worldId))
-      .collect();
     const worldMapDoc = await db
       .query('maps')
       .withIndex('worldId', (q) => q.eq('worldId', worldId))
@@ -123,9 +114,6 @@ export class Game extends AbstractGame {
     const { _id, _creationTime, historicalLocations: _, ...world } = worldDoc;
     const playerDescriptions = playerDescriptionsDocs
       .filter((d) => !!world.players.find((p) => p.id === d.playerId))
-      .map(({ _id, _creationTime, worldId: _, ...doc }) => doc);
-    const agentDescriptions = agentDescriptionsDocs
-      .filter((a) => !!world.agents.find((p) => p.id === a.agentId))
       .map(({ _id, _creationTime, worldId: _, ...doc }) => doc);
     const {
       _id: _mapId,
@@ -138,7 +126,6 @@ export class Game extends AbstractGame {
       gameState: {
         world,
         playerDescriptions,
-        agentDescriptions,
         worldMap,
       },
     };
@@ -237,7 +224,6 @@ export class Game extends AbstractGame {
     this.pendingOperations = [];
     if (this.descriptionsModified) {
       result.playerDescriptions = serializeMap(this.playerDescriptions);
-      result.agentDescriptions = serializeMap(this.agentDescriptions);
       result.worldMap = this.worldMap.serialize();
       this.descriptionsModified = false;
     }
@@ -292,9 +278,39 @@ export class Game extends AbstractGame {
         await ctx.db.insert('archivedAgents', { worldId, ...conversation });
       }
     }
+
+    const queueRefillRequests: Array<{
+      agentId: string;
+      playerId: string;
+      requestId: string;
+      remaining: number;
+      lastDequeuedAt?: number;
+    }> = [];
+    for (const agent of newWorld.agents) {
+      const prefetch = agent.externalQueueState?.prefetch;
+      if (!prefetch || prefetch.waiting !== true || typeof prefetch.requestedAt !== 'number') {
+        continue;
+      }
+      if (prefetch.dispatched === true || typeof prefetch.requestId !== 'string') {
+        continue;
+      }
+
+      const remaining =
+        (agent.externalEventQueue?.length ?? 0) + (agent.externalPriorityQueue?.length ?? 0);
+      queueRefillRequests.push({
+        agentId: agent.id,
+        playerId: agent.playerId,
+        requestId: prefetch.requestId,
+        remaining,
+        lastDequeuedAt: agent.externalQueueState?.lastDequeuedAt,
+      });
+      // 标记为已分发，避免每个 step 重复推送同一个 prefetch 请求。
+      prefetch.dispatched = true;
+    }
+
     await ctx.db.replace(worldId, newWorld);
 
-    const { playerDescriptions, agentDescriptions, worldMap } = diff;
+    const { playerDescriptions, worldMap } = diff;
     if (playerDescriptions) {
       for (const description of playerDescriptions) {
         const existing = await ctx.db
@@ -310,19 +326,6 @@ export class Game extends AbstractGame {
         }
       }
     }
-    if (agentDescriptions) {
-      for (const description of agentDescriptions) {
-        const existing = await ctx.db
-          .query('agentDescriptions')
-          .withIndex('worldId', (q) => q.eq('worldId', worldId).eq('agentId', description.agentId))
-          .unique();
-        if (existing) {
-          await ctx.db.replace(existing._id, { worldId, ...description });
-        } else {
-          await ctx.db.insert('agentDescriptions', { worldId, ...description });
-        }
-      }
-    }
     if (worldMap) {
       const existing = await ctx.db
         .query('maps')
@@ -335,11 +338,7 @@ export class Game extends AbstractGame {
       }
     }
 
-    const AGENT_ASYNC_OPERATIONS = new Set([
-      'agentRememberConversation',
-      'agentGenerateMessage',
-      'agentDoSomething',
-    ]);
+    const AGENT_ASYNC_OPERATIONS = new Set(['agentRememberConversation']);
 
     for (const operation of diff.agentOperations) {
       if (AGENT_ASYNC_OPERATIONS.has(operation.name)) {
@@ -370,12 +369,21 @@ export class Game extends AbstractGame {
           });
           break;
         case 'conversation.message':
-          await ctx.scheduler.runAfter(0, internal.aiTown.worldEventDispatcher.scheduleConversationMessage, {
+           await ctx.scheduler.runAfter(0, internal.aiTown.worldEventDispatcher.scheduleConversationMessage, {
+             worldId,
+             agentId: operation.args.agentId,
+             conversationId: operation.args.conversationId,
+             messageContent: operation.args.messageContent,
+             speakerId: operation.args.speakerId,
+             priority: 0,
+           });
+           break;
+        case 'conversation.timeout':
+          await ctx.scheduler.runAfter(0, internal.aiTown.worldEventDispatcher.scheduleConversationTimeout, {
             worldId,
             agentId: operation.args.agentId,
             conversationId: operation.args.conversationId,
-            messageContent: operation.args.messageContent,
-            speakerId: operation.args.speakerId,
+            reason: operation.args.reason,
             priority: 0,
           });
           break;
@@ -403,7 +411,7 @@ export class Game extends AbstractGame {
             .filter((p) => distance(p.position, position) <= CONVERSATION_DISTANCE)
             .map((p) => ({
               id: p.id,
-              name: p.name,
+              name: (p as any).name,
               position: p.position,
             }));
 
@@ -420,6 +428,22 @@ export class Game extends AbstractGame {
         default:
           break;
       }
+    }
+
+    for (const request of queueRefillRequests) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.aiTown.worldEventDispatcher.scheduleAgentQueueRefillRequested,
+        {
+          worldId,
+          agentId: request.agentId,
+          playerId: request.playerId,
+          requestId: request.requestId,
+          remaining: request.remaining,
+          lastDequeuedAt: request.lastDequeuedAt,
+          priority: 0,
+        },
+      );
     }
   }
 }

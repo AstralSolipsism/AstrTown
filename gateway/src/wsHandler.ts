@@ -224,86 +224,6 @@ export function registerWsRoutes<TEvent extends WsWorldEventBase<string, any>>(
         return;
       }
 
-      deps.log.info(
-        {
-          agentId: session.agentId,
-          worldId: session.worldId,
-          token: maskToken(token),
-          enabled: true,
-        },
-        '[WsHandler] 即将调用 setExternalControl',
-      );
-
-      void deps.astr.setExternalControl(token, true).then(() => {
-        deps.log.info(
-          { agentId: session.agentId, worldId: session.worldId, externalControlled: true },
-          '[WsHandler] setExternalControl 成功',
-        );
-      }).catch((e: any) => {
-        deps.log.error(
-          {
-            agentId: session.agentId,
-            worldId: session.worldId,
-            token: maskToken(token),
-            enabled: true,
-            err: String(e?.message ?? e),
-          },
-          'failed to enable external control on ws connect',
-        );
-      });
-
-      const externalControlReassertTimer = setTimeout(() => {
-        const current = deps.connections.getByAgentId(session.agentId);
-        const isCurrentSocket = current?.socket === (socket as any);
-        const socketOpen = socket.readyState === socket.OPEN;
-        if (!isCurrentSocket || !socketOpen) {
-          deps.log.info(
-            {
-              agentId: session.agentId,
-              worldId: session.worldId,
-              isCurrentSocket,
-              socketOpen,
-            },
-            '[WsHandler] 跳过延迟 setExternalControl 确认',
-          );
-          return;
-        }
-
-        deps.log.info(
-          {
-            agentId: session.agentId,
-            worldId: session.worldId,
-            token: maskToken(token),
-            enabled: true,
-            delayedConfirm: true,
-          },
-          '[WsHandler] 延迟确认 setExternalControl',
-        );
-
-        void deps.astr.setExternalControl(token, true).then(() => {
-          deps.log.info(
-            {
-              agentId: session.agentId,
-              worldId: session.worldId,
-              externalControlled: true,
-              delayedConfirm: true,
-            },
-            '[WsHandler] 延迟 setExternalControl 成功',
-          );
-        }).catch((e: any) => {
-          deps.log.error(
-            {
-              agentId: session.agentId,
-              worldId: session.worldId,
-              token: maskToken(token),
-              enabled: true,
-              delayedConfirm: true,
-              err: String(e?.message ?? e),
-            },
-            'failed to reassert external control after ws connect',
-          );
-        });
-      }, 1500);
 
       let degradedOnDisconnect = false;
       const triggerDisconnectDegrade = async () => {
@@ -385,6 +305,7 @@ export function registerWsRoutes<TEvent extends WsWorldEventBase<string, any>>(
                   payload: {
                     commandId,
                     status: 'rejected',
+                    ackSemantics: 'queued',
                     reason: 'Gateway error',
                   },
                 } satisfies WsOutboundMessage,
@@ -398,7 +319,6 @@ export function registerWsRoutes<TEvent extends WsWorldEventBase<string, any>>(
       });
 
       socket.on('close', () => {
-        clearTimeout(externalControlReassertTimer);
         // If this socket was evicted due to reconnect, avoid agent-level cleanup that would
         // accidentally wipe the new connection's resources.
         const evictedByReconnect = Boolean((socket as any)._evictedByReconnect);
@@ -407,32 +327,6 @@ export function registerWsRoutes<TEvent extends WsWorldEventBase<string, any>>(
 
         if (!evictedByReconnect && isCurrentSocket) {
           void triggerDisconnectDegrade();
-          deps.log.info(
-            {
-              agentId: session.agentId,
-              worldId: session.worldId,
-              token: maskToken(token),
-              enabled: false,
-            },
-            '[WsHandler] 即将调用 setExternalControl',
-          );
-          void deps.astr.setExternalControl(token, false).then(() => {
-            deps.log.info(
-              { agentId: session.agentId, worldId: session.worldId, externalControlled: false },
-              '[WsHandler] setExternalControl 已关闭',
-            );
-          }).catch((e: any) => {
-            deps.log.error(
-              {
-                agentId: session.agentId,
-                worldId: session.worldId,
-                token: maskToken(token),
-                enabled: false,
-                err: String(e?.message ?? e),
-              },
-              'failed to disable external control on ws disconnect',
-            );
-          });
           deps.dispatcher.onDisconnect(session.agentId);
           deps.commandQueue.clearAgent(session.agentId);
           deps.queues?.delete(session.agentId);

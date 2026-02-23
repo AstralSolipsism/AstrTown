@@ -5,9 +5,10 @@ import {
   getAgentStatus,
   getWorldState,
   postCommand,
-  postControl,
+  postCommandBatchHttp,
   postDescriptionUpdate,
   postEventAck,
+  postMemorySearch,
   postTokenCreate,
   postTokenValidate,
 } from './botApi';
@@ -24,6 +25,12 @@ http.route({
   path: '/api/bot/command',
   method: 'POST',
   handler: postCommand,
+});
+
+http.route({
+  path: '/api/bot/command/batch',
+  method: 'POST',
+  handler: postCommandBatchHttp,
 });
 
 http.route({
@@ -51,12 +58,6 @@ http.route({
 });
 
 http.route({
-  path: '/api/bot/control',
-  method: 'POST',
-  handler: postControl,
-});
-
-http.route({
   path: '/api/bot/token/validate',
   method: 'POST',
   handler: postTokenValidate,
@@ -66,6 +67,12 @@ http.route({
   path: '/api/bot/token/create',
   method: 'POST',
   handler: postTokenCreate,
+});
+
+http.route({
+  path: '/api/bot/memory/search',
+  method: 'POST',
+  handler: postMemorySearch,
 });
 
 http.route({

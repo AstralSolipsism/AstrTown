@@ -1,0 +1,34 @@
+# 忽略所有文件
+*
+
+# 允许目录递归
+!*/
+
+# 允许上传的目录
+!astrbot_plugin_astrtown/
+!astrbot_plugin_astrtown/**
+!AstrTown/
+!AstrTown/**
+!dashboard-self-hosted/
+!dashboard-self-hosted/**
+!gateway/
+!gateway/**
+!plans/
+!plans/**
+
+# 允许根目录文件
+!docker-compose.yml
+!.gitignore
+
+# 忽略依赖和构建产物（全局）
+node_modules/
+.next/
+__pycache__/
+*.pyc
+dist/
+build/
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db

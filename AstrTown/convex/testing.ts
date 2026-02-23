@@ -14,7 +14,6 @@ import { kickEngine, startEngine, stopEngine } from './aiTown/main';
 import { insertInput } from './aiTown/insertInput';
 import { fetchEmbedding } from './util/llm';
 import { chatCompletion } from './util/llm';
-import { startConversationMessage } from './agent/conversation';
 import { GameId } from './aiTown/ids';
 import { CONVERSATION_DISTANCE } from './constants';
 import { distance } from './util/geometry';
@@ -100,9 +99,7 @@ export const resume = mutation({
     await ctx.db.patch(worldStatus._id, { status: 'running' });
     const world = await ctx.db.get(worldStatus.worldId);
     if (world) {
-      const externalAgents = (world.agents ?? []).filter(
-        (a: any) => a?.isExternalControlled === true,
-      );
+      const externalAgents = (world.agents ?? []).filter((a: any) => typeof a?.id === 'string');
       for (const externalAgent of externalAgents) {
         const player = world.players.find((p: any) => p.id === externalAgent.playerId);
         if (!player) {
@@ -217,16 +214,4 @@ export const testCompletion = internalAction({
   },
 });
 
-export const testConvo = internalAction({
-  args: {},
-  handler: async (ctx, args) => {
-    const a: any = (await startConversationMessage(
-      ctx,
-      'm1707m46wmefpejw1k50rqz7856qw3ew' as Id<'worlds'>,
-      'c:115' as GameId<'conversations'>,
-      'p:0' as GameId<'players'>,
-      'p:6' as GameId<'players'>,
-    )) as any;
-    return await a.readAll();
-  },
-});
+// Removed internal LLM conversation prompt generator in phase 3 cleanup.

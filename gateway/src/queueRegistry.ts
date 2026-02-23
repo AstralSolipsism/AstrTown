@@ -24,7 +24,13 @@ export class BotQueueRegistry<TEvent extends WsWorldEventBase<string, any>> {
 
 export function classifyPriority(event: WsWorldEventBase<string, any>, hinted?: EventPriority): EventPriority {
   if (hinted !== undefined) return hinted;
+
+  // Ensure highest priority for timeout events.
+  if (event.type === 'conversation.timeout') return 0;
+
+  // By convention, conversation events are the most important.
   if (event.type.startsWith('conversation.')) return 0;
+
   if (event.type === 'agent.state_changed') {
     const nearby = (event as any)?.payload?.nearbyPlayers;
     if (Array.isArray(nearby) && nearby.length > 0) return 1;
