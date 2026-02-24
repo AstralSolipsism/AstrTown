@@ -12,7 +12,9 @@ export type CommandType =
   | 'start_conversation'
   | 'leave_conversation'
   | 'continue_doing'
-  | 'do_something';
+  | 'do_something'
+  | 'propose_relationship'
+  | 'respond_relationship';
 
 export type AstrTownCommandRequest = {
   agentId: string;
@@ -177,6 +179,32 @@ export function createDefaultCommandMapper(): CommandMapper {
       commandType: 'leave_conversation',
       args: {
         conversationId: (payload as any)?.conversationId,
+      },
+    }),
+  });
+
+  mapper.register({
+    commandType: 'propose_relationship',
+    buildRequest: (payload) => ({
+      agentId: (payload as any)?.agentId,
+      // 特殊命令：在 gateway 路由层本地处理，不应转发到 Convex command API。
+      commandType: 'propose_relationship',
+      args: {
+        targetPlayerId: (payload as any)?.targetPlayerId,
+        status: (payload as any)?.status,
+      },
+    }),
+  });
+
+  mapper.register({
+    commandType: 'respond_relationship',
+    buildRequest: (payload) => ({
+      agentId: (payload as any)?.agentId,
+      // 特殊命令：在 gateway 路由层本地处理，不应转发到 Convex command API。
+      commandType: 'respond_relationship',
+      args: {
+        proposerId: (payload as any)?.proposerId,
+        accept: (payload as any)?.accept,
       },
     }),
   });

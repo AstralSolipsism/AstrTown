@@ -35,21 +35,6 @@ const commandQueue = new CommandQueue({
   log: app.log,
 });
 
-const commandRouter = new CommandRouter({
-  client: astr,
-  mapper,
-  queue: commandQueue,
-  send: (conn, msg) => {
-    try {
-      conn.socket.send(JSON.stringify(msg));
-    } catch (e: any) {
-      app.log.warn({ err: String(e?.message ?? e), agentId: conn.session.agentId }, 'commandRouter ws send failed');
-      throw e;
-    }
-  },
-  log: app.log,
-});
-
 const queues = new BotQueueRegistry<WorldEvent>(Number(process.env.QUEUE_MAX_SIZE_PER_LEVEL ?? '100'));
 
 const dispatcher = new EventDispatcher<WorldEvent>({
@@ -65,6 +50,24 @@ const dispatcher = new EventDispatcher<WorldEvent>({
       conn.socket.send(JSON.stringify(msg));
     } catch (e: any) {
       app.log.warn({ err: String(e?.message ?? e), agentId: conn.session.agentId, eventType: (msg as any)?.type }, 'eventDispatcher ws send failed');
+      throw e;
+    }
+  },
+  log: app.log,
+});
+
+const commandRouter = new CommandRouter({
+  client: astr,
+  mapper,
+  queue: commandQueue,
+  connections,
+  worldEventQueues: queues,
+  worldEventDispatcher: dispatcher,
+  send: (conn, msg) => {
+    try {
+      conn.socket.send(JSON.stringify(msg));
+    } catch (e: any) {
+      app.log.warn({ err: String(e?.message ?? e), agentId: conn.session.agentId }, 'commandRouter ws send failed');
       throw e;
     }
   },

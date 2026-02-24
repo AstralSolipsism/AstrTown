@@ -12,20 +12,24 @@
   - HTTP 接入：
     - `/gateway/event`：接收来自上游（通常是 AstrTown/Convex）推送的世界事件，经鉴权与幂等处理后，按优先级入队并尝试投递到对应 bot 的 WebSocket（见 [`registerHttpRoutes()`](../gateway/src/routes.ts:14)）。
     - `/gateway/status`、`/health`、`/gateway/metrics`：健康检查与指标暴露（见 [`registerHttpRoutes()`](../gateway/src/routes.ts:46)、[`renderMetrics()`](../gateway/src/metrics.ts:77)）。
-    - `/api/bot/description/update`：到 AstrTown 后端的 HTTP 代理（见 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:120)）。
-    - `/api/bot/memory/search`：记忆检索代理透传路由，接收插件请求并将 `Authorization` 头与 JSON body 直接 `fetch` 转发到上游 AstrTown/Convex 的 `/api/bot/memory/search`（见 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:120)）。
+    - `/api/bot/description/update`：到 AstrTown 后端的描述更新代理（见 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:121)）。
+    - `/api/bot/memory/search`：记忆检索代理透传（`POST`，见 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:168)）。
+    - `/api/bot/social/affinity`：好感度写回代理透传（`POST`，见 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:194)）。
+    - `/api/bot/memory/recent`：近期记忆查询代理透传（`GET`，见 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:220)）。
+    - `/api/bot/social/state`：社交关系/好感状态查询代理透传（`GET`，见 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:248)）。
+    - `/api/bot/memory/inject`：记忆注入代理透传（`POST`，见 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:276)）。
 
 
 ### 1.2 核心组件与协作方式
 
 gateway 的运行时结构在入口文件 [`gateway/src/index.ts`](../gateway/src/index.ts) 中完成组装，关键对象包括：
 
-- AstrTown API 客户端：[`AstrTownClient`](../gateway/src/astrtownClient.ts:49)（封装 token 校验、下发命令、批量命令、描述更新）。
-- 连接管理：[`ConnectionManager`](../gateway/src/connectionManager.ts:11)（按 token 与 agentId 索引当前 WebSocket 连接）。
+- AstrTown API 客户端：[`AstrTownClient`](../gateway/src/astrtownClient.ts:57)（封装 token 校验、下发命令、批量命令、描述更新、社交关系写回 [`upsertRelationship()`](../gateway/src/astrtownClient.ts:231)；并暴露可读 `baseUrl` 供 HTTP 代理透传使用）。
+- 连接管理：[`ConnectionManager`](../gateway/src/connectionManager.ts:11)（按 token、agentId、playerId 三索引维护当前 WebSocket 连接，提供 [`getByPlayerId()`](../gateway/src/connectionManager.ts:28)）。
 - 命令路径：
-  - 命令映射：[`CommandMapper`](../gateway/src/commandMapper.ts:31) 将 WS 上收到的 `command.*` 语义映射成可投递给 AstrTown 后端的事件/请求。
+  - 命令映射：[`CommandMapper`](../gateway/src/commandMapper.ts:33) 将 WS 上收到的 `command.*` 语义映射成可投递给 AstrTown 后端的事件/请求，并纳入社交关系命令 `propose_relationship/respond_relationship`。
   - 命令串行化：[`CommandQueue`](../gateway/src/commandQueue.ts:23) 保证同一 agent 的命令按序执行，并具备超时与完成信号（例如 `action.finished`）驱动的推进。
-  - 命令路由：[`CommandRouter`](../gateway/src/commandRouter.ts:17) 负责解析 WS 入站命令、入队执行、向客户端发送 `command.ack`。
+  - 命令路由：[`CommandRouter`](../gateway/src/commandRouter.ts:42) 负责解析 WS 入站命令、入队执行、向客户端发送 `command.ack`；其中社交关系命令在 gateway 内本地分支处理，不透传到后端 command API。
 - 事件路径：
   - 事件队列：[`EventQueue`](../gateway/src/eventQueue.ts:27) 维护 per-agent、分优先级的队列，并支持过期丢弃与重试调度字段（attempts/nextAttemptAt）。
   - 队列注册表：[`BotQueueRegistry`](../gateway/src/queueRegistry.ts:6) 为每个 agent 懒加载一个 [`EventQueue`](../gateway/src/eventQueue.ts:27)。
@@ -38,8 +42,9 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
 
 - 对 bot：提供统一的 WebSocket 协议（鉴权、版本协商、订阅过滤、队列化 ACK 语义）。
 - 对后端：
-  - 作为命令转发器：将 WS 指令转成后端可接受的 HTTP 请求（[`AstrTownClient.postCommand()`](../gateway/src/astrtownClient.ts:109)、[`AstrTownClient.postCommandBatch()`](../gateway/src/astrtownClient.ts:157)）。
-  - 作为事件分发器：将后端推送事件按 agent 分发到 WS（[`/gateway/event`](../gateway/src/routes.ts:65) → 入队 → dispatcher）。
+  - 作为命令转发器：将 WS 指令转成后端可接受的 HTTP 请求（[`AstrTownClient.postCommand()`](../gateway/src/astrtownClient.ts:117)、[`AstrTownClient.postCommandBatch()`](../gateway/src/astrtownClient.ts:165)）。
+  - 作为“社交关系命令本地处理器”：对 `command.propose_relationship` / `command.respond_relationship` 在 gateway 内执行目标在线检查、参数校验、关系写回与社交事件投递，不再进入后端 command API（见 [`CommandRouter.handle()`](../gateway/src/commandRouter.ts:142)）。
+  - 作为事件分发器：将后端推送事件按 agent 分发到 WS（[`/gateway/event`](../gateway/src/routes.ts:65) → 入队 → dispatcher），并支持社交关系事件 `social.relationship_proposed` / `social.relationship_responded`。
   - 说明：gateway 当前**不再**在 WebSocket 连接建立/断开时触发任何“外控开关”流程（不再调用 `deps.astr.setExternalControl(token, true/false)`；也不再存在 `externalControlReassertTimer` 二次确认）。
 
 ## 2. 文件清单
@@ -48,23 +53,23 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
 
 | # | 文件 | 功能概述 | 行数(约) | 字符数 |
 |---:|---|---|---:|---:|
-| 1 | [`gateway/src/astrtownClient.ts`](../gateway/src/astrtownClient.ts) | AstrTown 后端 HTTP 客户端：token 校验、命令下发、批量命令、描述更新 | 245 | 7189 |
+| 1 | [`gateway/src/astrtownClient.ts`](../gateway/src/astrtownClient.ts) | AstrTown 后端 HTTP 客户端：token 校验、命令下发、批量命令、描述更新、社交关系写回 | 274 | 7944 |
 | 2 | [`gateway/src/auth.ts`](../gateway/src/auth.ts) | WS 鉴权/协商辅助：版本范围解析、协议版本协商、订阅列表解析、connected/auth_error 构造、消息解析/序列化 | 129 | 3896 |
-| 3 | [`gateway/src/commandMapper.ts`](../gateway/src/commandMapper.ts) | 将 WS 命令映射为后端外部事件（batch/event） | 185 | 5053 |
+| 3 | [`gateway/src/commandMapper.ts`](../gateway/src/commandMapper.ts) | 将 WS 命令映射为后端外部事件（batch/event），含社交关系命令映射注册 | 213 | 6242 |
 | 4 | [`gateway/src/commandQueue.ts`](../gateway/src/commandQueue.ts) | per-agent 命令串行执行队列：inflight、超时、完成推进 | 147 | 4156 |
-| 5 | [`gateway/src/commandRouter.ts`](../gateway/src/commandRouter.ts) | WS 入站命令路由：解析、入队、调用 AstrTownClient、发送 command.ack、记录指标 | 186 | 7229 |
+| 5 | [`gateway/src/commandRouter.ts`](../gateway/src/commandRouter.ts) | WS 入站命令路由：解析、入队、调用 AstrTownClient、发送 command.ack、记录指标，含社交关系命令本地分支 | 484 | 18395 |
 | 6 | [`gateway/src/config.ts`](../gateway/src/config.ts) | 环境变量配置加载与 ACK 重试参数解析 | 65 | 1991 |
-| 7 | [`gateway/src/connectionManager.ts`](../gateway/src/connectionManager.ts) | WebSocket 连接与会话索引（byToken/byAgentId） | 47 | 1252 |
+| 7 | [`gateway/src/connectionManager.ts`](../gateway/src/connectionManager.ts) | WebSocket 连接与会话索引（byToken/byAgentId/byPlayerId） | 54 | 1540 |
 | 8 | [`gateway/src/eventDispatcher.ts`](../gateway/src/eventDispatcher.ts) | 事件投递器：出队、订阅过滤、发送、等待 ack、超时重试/丢弃、指标统计 | 170 | 6351 |
 | 9 | [`gateway/src/eventQueue.ts`](../gateway/src/eventQueue.ts) | 分优先级事件队列：enqueue/peek/dequeue/remove/depth、过期判定字段 | 110 | 3167 |
-| 10 | [`gateway/src/httpRoutes.ts`](../gateway/src/httpRoutes.ts) | HTTP 解析与代理：解析 incoming event、构造 WS world event、description/update 代理 | 166 | 5698 |
+| 10 | [`gateway/src/httpRoutes.ts`](../gateway/src/httpRoutes.ts) | HTTP 解析与代理：解析 incoming event、构造 WS world event、description/update 与 memory/social 代理 | 301 | 10280 |
 | 11 | [`gateway/src/id.ts`](../gateway/src/id.ts) | 基于 uuid 的简单 ID 工具（可带前缀） | 6 | 170 |
-| 12 | [`gateway/src/index.ts`](../gateway/src/index.ts) | 入口：Fastify 初始化、依赖组装、注册 WS/HTTP 路由、监听端口 | 106 | 3200 |
+| 12 | [`gateway/src/index.ts`](../gateway/src/index.ts) | 入口：Fastify 初始化、依赖组装、注册 WS/HTTP 路由、监听端口（CommandRouter 注入 world event 依赖） | 109 | 3282 |
 | 13 | [`gateway/src/metrics.ts`](../gateway/src/metrics.ts) | Prometheus 指标定义与输出（text/json） | 95 | 2933 |
-| 14 | [`gateway/src/queueRegistry.ts`](../gateway/src/queueRegistry.ts) | per-agent 队列注册表、事件优先级分类、入队并触发投递 | 56 | 2027 |
+| 14 | [`gateway/src/queueRegistry.ts`](../gateway/src/queueRegistry.ts) | per-agent 队列注册表、事件优先级分类、入队并触发投递（含 social.relationship_proposed 优先级） | 63 | 2268 |
 | 15 | [`gateway/src/routes.ts`](../gateway/src/routes.ts) | Fastify HTTP 路由：status/metrics/health、/gateway/event（鉴权、幂等、入队、命令完成联动） | 141 | 5079 |
 | 16 | [`gateway/src/subscription.ts`](../gateway/src/subscription.ts) | 订阅匹配器：支持 `*` 与 `prefix.*` | 23 | 732 |
-| 17 | [`gateway/src/types.ts`](../gateway/src/types.ts) | WS 协议类型定义：消息基类、world event、commands、ack、会话、优先级等 | 278 | 6711 |
+| 17 | [`gateway/src/types.ts`](../gateway/src/types.ts) | WS 协议类型定义：消息基类、world event、commands、ack、会话、优先级等（含社交关系命令/事件联合类型） | 329 | 8214 |
 | 18 | [`gateway/src/utils.ts`](../gateway/src/utils.ts) | 幂等缓存与“已连接”错误消息构造 | 36 | 901 |
 | 19 | [`gateway/src/uuid.ts`](../gateway/src/uuid.ts) | `randomUUID()` 封装 | 5 | 112 |
 | 20 | [`gateway/src/wsHandler.ts`](../gateway/src/wsHandler.ts) | WS 路由与连接生命周期：版本协商、鉴权、去重、心跳、消息处理、断开清理、外部控制开关 | 495 | 16929 |
@@ -77,17 +82,17 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
 
 - 基本信息
   - 角色：AstrTown 后端 HTTP 客户端封装。
-  - 关键类型：[`VerifyTokenResponse`](../gateway/src/astrtownClient.ts:6)、[`PostCommandResponse`](../gateway/src/astrtownClient.ts:20)、[`PostCommandBatchArgs`](../gateway/src/astrtownClient.ts:34)、[`UpdateDescriptionResponse`](../gateway/src/astrtownClient.ts:42)。
+  - 关键类型：[`VerifyTokenResponse`](../gateway/src/astrtownClient.ts:6)、[`PostCommandResponse`](../gateway/src/astrtownClient.ts:20)、[`PostCommandBatchArgs`](../gateway/src/astrtownClient.ts:34)、[`UpdateDescriptionResponse`](../gateway/src/astrtownClient.ts:42)、[`UpsertRelationshipResponse`](../gateway/src/astrtownClient.ts:49)。
 
 - 导入模块
   - 无本地 import；依赖全局 `fetch`、`Response` 类型（通过 `typeof fetch`、运行环境提供）。
 
 - 导出内容
-  - 类型：`AstrTownClientDeps`、`VerifyTokenResponse`、`PostCommandResponse`、`PostCommandEnqueueMode`、`PostCommandBatchEvent`、`PostCommandBatchArgs`、`UpdateDescriptionResponse`。
+  - 类型：`AstrTownClientDeps`、`VerifyTokenResponse`、`PostCommandResponse`、`PostCommandEnqueueMode`、`PostCommandBatchEvent`、`PostCommandBatchArgs`、`UpdateDescriptionResponse`、`UpsertRelationshipResponse`。
   - 类：[`AstrTownClient`](../gateway/src/astrtownClient.ts:49)。
 
 - 定义的函数/变量（类方法）
-  - 构造：[`constructor()`](../gateway/src/astrtownClient.ts:53) 规范化 `baseUrl`（去尾 `/`），确定 `fetchFn`。
+  - 构造：[`constructor()`](../gateway/src/astrtownClient.ts:61) 规范化 `baseUrl`（去尾 `/`），确定 `fetchFn`；`baseUrl` 以 `readonly` 暴露，供 HTTP 代理透传调用。
   - Token 校验：[`validateToken()`](../gateway/src/astrtownClient.ts:58)
     - 调用 `POST {baseUrl}/api/bot/token/validate`。
     - 网络错误返回 `{valid:false, code:'NETWORK_ERROR'...}`。
@@ -101,17 +106,21 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
     - 调用 `POST {baseUrl}/api/bot/command/batch`。
     - 失败直接 `throw Error(code: message)`（供上层捕获）。
   - 说明：`gateway client` 层当前不再提供 `setExternalControl` 方法（见 [`AstrTownClient`](../gateway/src/astrtownClient.ts:49) 的方法清单）。
-  - 描述更新：[`updateDescription()`](../gateway/src/astrtownClient.ts:208)
+  - 描述更新：[`updateDescription()`](../gateway/src/astrtownClient.ts:193)
     - 调用 `POST {baseUrl}/api/bot/description/update`。
     - 封装成 `{ok:false, error, code, statusCode}` 或 `{ok:true}`。
+  - 社交关系写回：[`upsertRelationship()`](../gateway/src/astrtownClient.ts:231)
+    - 调用 `POST {baseUrl}/api/bot/social/relationship`。
+    - 请求体：`{ playerAId, playerBId, status, establishedAt }`。
+    - 返回 `{ok:true, relationshipId?}` 或 `{ok:false, error, code, statusCode}`。
 
 - 文件内部关系
   - 无；方法间仅共享 `baseUrl/fetchFn`。
 
 - 文件间关系
   - 被 [`registerWsRoutes()`](../gateway/src/wsHandler.ts:37) 调用：`validateToken`、`postCommand`。
-  - 被 [`CommandRouter`](../gateway/src/commandRouter.ts:17) 调用：`postCommand`、`postCommandBatch`。
-  - 被 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:120) 调用：`updateDescription`。
+  - 被 [`CommandRouter`](../gateway/src/commandRouter.ts:42) 调用：`postCommand`、`postCommandBatch`、`upsertRelationship`。
+  - 被 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:121) 调用：`updateDescription`；并通过 `readonly baseUrl` 作为 memory/social 代理的上游基地址。
 
 ### 3.2 [`gateway/src/auth.ts`](../gateway/src/auth.ts)
 
@@ -168,16 +177,17 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
     - 使用 [`createUuid()`](../gateway/src/uuid.ts:3) 生成 `eventId`。
     - `kind` 使用 request.commandType；`args` 强转为 `Record<string, any>`；可附带 `defaultPriority`。
   - 批量映射：[`CommandMapper.mapBatchToExternalEvents()`](../gateway/src/commandMapper.ts:57)。
-  - 默认映射集：[`createDefaultCommandMapper()`](../gateway/src/commandMapper.ts:62)
+  - 默认映射集：[`createDefaultCommandMapper()`](../gateway/src/commandMapper.ts:64)
     - `set_activity` 被映射为后端 `continue_doing`，并把 `duration` 转换成 `until`（`Date.now() + duration`）。
     - `accept_invite/reject_invite` 设置 `defaultPriority: 1`，并在注释中说明必须进入优先队列。
     - `invite` 被映射为后端 `start_conversation`。
+    - 新增 `propose_relationship/respond_relationship` 映射注册；映射项保留在表中用于类型统一与 batch 解析，但注释明确这两类命令应在 gateway 路由层本地处理，不透传后端 command API。
 
 - 文件内部关系
   - `createDefaultCommandMapper` 通过多次 `mapper.register` 组装 mapping 表。
 
 - 文件间关系
-  - 被 [`CommandRouter`](../gateway/src/commandRouter.ts:17) 使用：校验命令支持性（`mapper.get`）与构造请求（`mapping.buildRequest`），以及在 batch 分支使用 `mapBatchToExternalEvents`。
+  - 被 [`CommandRouter`](../gateway/src/commandRouter.ts:42) 使用：校验命令支持性（`mapper.get`）与构造请求（`mapping.buildRequest`），并在 batch 分支对非社交关系命令使用 `mapBatchToExternalEvents` 透传。
 
 ### 3.4 [`gateway/src/commandQueue.ts`](../gateway/src/commandQueue.ts)
 
@@ -221,42 +231,51 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
 ### 3.5 [`gateway/src/commandRouter.ts`](../gateway/src/commandRouter.ts)
 
 - 基本信息
-  - 角色：WS 入站命令处理器；将命令入队串行执行；调用 AstrTownClient；回发 `command.ack`；记录指标。
+  - 角色：WS 入站命令处理器；将命令入队串行执行；调用 AstrTownClient；回发 `command.ack`；记录指标；并在网关内本地处理社交关系命令。
 
 - 导入模块
-  - 类型/对象：`AstrTownClient`（类型）来自 [`astrtownClient.ts`](../gateway/src/astrtownClient.ts:49)。
+  - 类型/对象：`AstrTownClient`（类型）来自 [`astrtownClient.ts`](../gateway/src/astrtownClient.ts:57)。
   - UUID：[`createUuid()`](../gateway/src/uuid.ts:3)。
   - 指标：[`commandsTotal`](../gateway/src/metrics.ts:21)、[`commandLatencyMs`](../gateway/src/metrics.ts:27)。
-  - 类型：`BotConnection` 来自 [`connectionManager.ts`](../gateway/src/connectionManager.ts:3)。
+  - 类型：`BotConnection`、`ConnectionManager` 来自 [`connectionManager.ts`](../gateway/src/connectionManager.ts:3)。
   - 类型：`CommandMapper/CommandType` 来自 [`commandMapper.ts`](../gateway/src/commandMapper.ts:5)。
   - 类型：`CommandQueue` 来自 [`commandQueue.ts`](../gateway/src/commandQueue.ts:23)。
-  - 类型：`WsInboundMessage` 来自 [`types.ts`](../gateway/src/types.ts:241)。
+  - 事件依赖：`BotQueueRegistry`、`EventDispatcher` 以及 [`classifyPriority()`](../gateway/src/queueRegistry.ts:25)/[`enqueueWorldEvent()`](../gateway/src/queueRegistry.ts:44)。
+  - 类型：`SocialRelationshipProposedEvent`、`SocialRelationshipRespondedEvent`、`WorldEvent`、`WsInboundMessage`、`WsWorldEventBase` 来自 [`types.ts`](../gateway/src/types.ts:130)。
 
 - 导出内容
   - 类型：`CommandRouterDeps`。
-  - 类：[`CommandRouter`](../gateway/src/commandRouter.ts:17)。
+  - 类：[`CommandRouter`](../gateway/src/commandRouter.ts:42)。
 
 - 关键函数/变量
-  - batch 解析：[`toBatchItems()`](../gateway/src/commandRouter.ts:20)
+  - batch 解析：[`toBatchItems()`](../gateway/src/commandRouter.ts:45)
     - 校验 payload.commands 非空数组。
     - 校验每项 `type` 以 `command.` 开头，且 `id` 非空。
     - 将 `type` 去前缀得到 `CommandType`，并用 `mapper.get` 校验支持性。
-  - ACK 发送封装：[`safeAckSend()`](../gateway/src/commandRouter.ts:49)
+  - ACK 发送封装：[`safeAckSend()`](../gateway/src/commandRouter.ts:74)
     - 始终发送 `ackSemantics:'queued'`，并 try/catch 防止影响主流程。
-  - 主入口：[`handle()`](../gateway/src/commandRouter.ts:77)
+  - 本地社交事件入队封装：[`pushRelationshipProposedEvent()`](../gateway/src/commandRouter.ts:102)、[`pushRelationshipRespondedEvent()`](../gateway/src/commandRouter.ts:122)
+    - 使用 [`isWsWorldEventBase()`](../gateway/src/commandRouter.ts:29) 做事件结构校验。
+    - 通过 [`classifyPriority()`](../gateway/src/queueRegistry.ts:25) + [`enqueueWorldEvent()`](../gateway/src/queueRegistry.ts:44) 投递到目标 agent 队列。
+  - 主入口：[`handle()`](../gateway/src/commandRouter.ts:142)
     - `command.batch`：
       - 解析 batchItems；失败则对 batch 消息 id 回 `rejected`。
       - 入 [`CommandQueue.enqueue()`](../gateway/src/commandQueue.ts:32)，执行函数内：
-        - `mapper.mapBatchToExternalEvents(...)` 生成外部事件（eventId/kind/args/priority）。
-        - 调用 [`AstrTownClient.postCommandBatch()`](../gateway/src/astrtownClient.ts:157)。
-        - 对每个 batch item 及总 batch id 发送 `accepted/rejected` ack。
+        - 新增 `acceptedCommandIds` 与 `passthroughItems` 分流：
+          - `propose_relationship`：校验 `targetPlayerId/status`；通过 [`ConnectionManager.getByPlayerId()`](../gateway/src/connectionManager.ts:28) 检查目标在线；在线则构建 `social.relationship_proposed` 并入队目标 agent，离线则对该子命令 ack rejected(`target_offline`)。
+          - `respond_relationship`：校验 `proposerId`；`accept=true` 时先调用 [`AstrTownClient.upsertRelationship()`](../gateway/src/astrtownClient.ts:231) 写回关系，再向 proposer 在线连接投递 `social.relationship_responded`（proposer 离线仅记录 info）。
+          - 其他命令进入 `passthroughItems`，再调用 [`AstrTownClient.postCommandBatch()`](../gateway/src/astrtownClient.ts:165) 透传。
+        - 子命令 ACK 与 batch 总 ACK 分离：已本地接受的 commandId 进入 `acceptedCommandIds`；异常时仅补发未接受子命令 rejected ACK，并回 batch rejected。
     - 单命令：
       - 仅处理 `type` 以 `command.` 开头。
       - 查找 mapping；无 mapping 则直接 ack rejected。
-      - 入队执行：
+      - 社交关系单命令走本地分支：
+        - `command.propose_relationship`：参数校验 + 目标在线检查 + 投递 `social.relationship_proposed` + ACK。
+        - `command.respond_relationship`：参数校验 + 可选关系写回（accept）+ 投递 `social.relationship_responded` + ACK。
+      - 其他命令保持透传：
         - `mapping.buildRequest({agentId,...payload})`
         - 生成 `idempotencyKey`（含 agentId、commandType、时间戳、短 uuid 前缀）。
-        - 调用 [`AstrTownClient.postCommand()`](../gateway/src/astrtownClient.ts:109)
+        - 调用 [`AstrTownClient.postCommand()`](../gateway/src/astrtownClient.ts:117)
           - 对 `say` 使用 `enqueueMode:'immediate'`，其余 `queue`（注释解释绕过后端外部事件队列以确保对话渲染）。
         - 根据返回 accepted/rejected 回 ack 并打点 `commandsTotal`。
 
@@ -265,9 +284,11 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
 
 - 文件间关系
   - 依赖 [`CommandQueue`](../gateway/src/commandQueue.ts:23) 进行 per-agent 串行。
-  - 依赖 [`CommandMapper`](../gateway/src/commandMapper.ts:31) 做命令语义映射。
-  - 依赖 [`AstrTownClient`](../gateway/src/astrtownClient.ts:49) 完成真正的后端调用。
-  - 由 WS 层调用：[`registerWsRoutes()`](../gateway/src/wsHandler.ts:37) 在 message handler 中对 `command.*` 调用 [`CommandRouter.handle()`](../gateway/src/commandRouter.ts:77)。
+  - 依赖 [`CommandMapper`](../gateway/src/commandMapper.ts:33) 做命令语义映射。
+  - 依赖 [`AstrTownClient`](../gateway/src/astrtownClient.ts:57) 完成后端调用（含关系写回 [`upsertRelationship()`](../gateway/src/astrtownClient.ts:231)）。
+  - 依赖 [`ConnectionManager`](../gateway/src/connectionManager.ts:11) 的 [`getByPlayerId()`](../gateway/src/connectionManager.ts:28) 完成社交命令目标在线检查。
+  - 依赖事件队列与分发器（[`BotQueueRegistry`](../gateway/src/queueRegistry.ts:6)、[`EventDispatcher`](../gateway/src/eventDispatcher.ts:15)）把社交关系事件发送给目标 agent。
+  - 由 WS 层调用：[`registerWsRoutes()`](../gateway/src/wsHandler.ts:37) 在 message handler 中对 `command.*` 调用 [`CommandRouter.handle()`](../gateway/src/commandRouter.ts:142)。
 
 ### 3.6 [`gateway/src/config.ts`](../gateway/src/config.ts)
 
@@ -300,7 +321,7 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
 ### 3.7 [`gateway/src/connectionManager.ts`](../gateway/src/connectionManager.ts)
 
 - 基本信息
-  - 角色：管理活跃 WS 连接的索引结构，支持按 token 与 agentId 查找。
+  - 角色：管理活跃 WS 连接的索引结构，支持按 token、agentId、playerId 查找。
 
 - 导入模块
   - 类型：`BotSession`、`ConnectionState` 来自 [`types.ts`](../gateway/src/types.ts:256)。
@@ -310,15 +331,16 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
   - 类：[`ConnectionManager`](../gateway/src/connectionManager.ts:11)。
 
 - 关键函数/变量
-  - `byToken/byAgentId` 两个 Map（见 [`ConnectionManager`](../gateway/src/connectionManager.ts:11)）。
-  - 查询：[`hasToken()`](../gateway/src/connectionManager.ts:15)、[`getByToken()`](../gateway/src/connectionManager.ts:19)、[`getByAgentId()`](../gateway/src/connectionManager.ts:23)。
-  - 注册：[`register()`](../gateway/src/connectionManager.ts:27) 同时写入两个索引。
-  - 反注册：[`unregisterByToken()`](../gateway/src/connectionManager.ts:32) 删除两个索引并返回旧连接。
-  - 会话列表/数量：[`listSessions()`](../gateway/src/connectionManager.ts:40)、[`size()`](../gateway/src/connectionManager.ts:44)。
+  - `byToken/byAgentId/byPlayerId` 三个 Map（见 [`ConnectionManager`](../gateway/src/connectionManager.ts:11)）。
+  - 查询：[`hasToken()`](../gateway/src/connectionManager.ts:16)、[`getByToken()`](../gateway/src/connectionManager.ts:20)、[`getByAgentId()`](../gateway/src/connectionManager.ts:24)、[`getByPlayerId()`](../gateway/src/connectionManager.ts:28)。
+  - 注册：[`register()`](../gateway/src/connectionManager.ts:32) 同时写入三索引。
+  - 反注册：[`unregisterByToken()`](../gateway/src/connectionManager.ts:38) 删除三索引并返回旧连接。
+  - 会话列表/数量：[`listSessions()`](../gateway/src/connectionManager.ts:47)、[`size()`](../gateway/src/connectionManager.ts:51)。
 
 - 文件间关系
   - WS 层：[`registerWsRoutes()`](../gateway/src/wsHandler.ts:37) 在鉴权成功后 `register`，断开时 `unregisterByToken`。
   - 事件层：[`EventDispatcher.tryDispatch()`](../gateway/src/eventDispatcher.ts:48) 通过 `getByAgentId` 找到连接。
+  - 命令层：[`CommandRouter.handle()`](../gateway/src/commandRouter.ts:142) 通过 `getByPlayerId` 做社交关系命令的目标在线检查与事件路由。
   - 连接去重：WS 层通过 `getByAgentId` 找到旧连接并驱逐（见 [`registerWsRoutes()`](../gateway/src/wsHandler.ts:37) 中 existing 分支）。
 
 ### 3.8 [`gateway/src/eventDispatcher.ts`](../gateway/src/eventDispatcher.ts)
@@ -406,7 +428,7 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
   - 角色：HTTP 侧的辅助工具：
     - 解析进入 gateway 的世界事件（兼容 legacy 字段）。
     - 构造 WS world event 结构。
-    - 注册到 AstrTown 的 description/update 代理路由。
+    - 注册到 AstrTown 的 description/update 与 memory/social 代理路由。
 
 - 导入模块
   - 类型：`FastifyInstance`。
@@ -427,13 +449,13 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
     - 校验 priority ∈ {0,1,2,3}。
 
 > 补充：`conversation.timeout` 是引擎侧的“强打断/兜底”事件，用于外控 Agent 在对话 invited/participating 阶段超时后通知插件端打破死锁。该事件被网关视为最高优先级并优先投递到 WS（见 [`classifyPriority()`](../gateway/src/queueRegistry.ts:25)）。
-  - 构造 WS world event：[`buildWsWorldEvent()`](../gateway/src/httpRoutes.ts:72)。
-  - description/update 代理：[`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:120)
+  - 构造 WS world event：[`buildWsWorldEvent()`](../gateway/src/httpRoutes.ts:73)。
+  - description/update 代理：[`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:121)
     - 校验 Authorization Bearer token。
     - 校验 body 的 `playerId/description`。
-    - 调用 [`AstrTownClient.updateDescription()`](../gateway/src/astrtownClient.ts:208)。
-    - 将失败映射为 HTTP 状态码（内部函数 `mapUpdateDescriptionErrorStatus`）。
-  - memory/search 代理：[`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:120)
+    - 调用 [`AstrTownClient.updateDescription()`](../gateway/src/astrtownClient.ts:193)。
+    - 将失败映射为 HTTP 状态码（内部函数 `mapUpdateDescriptionErrorStatus()`，见 [`gateway/src/httpRoutes.ts`](../gateway/src/httpRoutes.ts:93)）。
+  - memory/search 代理：[`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:121)
     - 路由：`POST /api/bot/memory/search`。
     - 目标：为 AstrBot 插件提供“记忆检索请求”的网关透传能力，将请求直接转发到上游 `/api/bot/memory/search`。
     - 鉴权：仅要求 `Authorization` 头存在（不在 gateway 内解析 Bearer 结构），并原样透传到上游。
@@ -442,8 +464,17 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
     - 响应：将上游 HTTP status 透传给客户端；响应体尝试 `res.json()`，失败回落 `{}`。
     - 错误处理：catch 时使用 `deps.log.error()` 打印 `memorySearch proxy failed`，并返回 `500 { ok:false, error:'Gateway error' }`。
 
+  - social/affinity 代理：`POST /api/bot/social/affinity`（见 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:121)）
+    - 透传 body 与 Authorization 到上游 `/api/bot/social/affinity`，透传状态码与 JSON 响应。
+  - memory/recent 代理：`GET /api/bot/memory/recent`（见 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:121)）
+    - 通过 `req.raw.url` 截取并保留 query string，透传到上游 `/api/bot/memory/recent`。
+  - social/state 代理：`GET /api/bot/social/state`（见 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:121)）
+    - 同样保留 query string，透传到上游 `/api/bot/social/state`。
+  - memory/inject 代理：`POST /api/bot/memory/inject`（见 [`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:121)）
+    - 透传 JSON body 与 Authorization 到上游 `/api/bot/memory/inject`。
+
 - 文件间关系
-  - 被 HTTP 主路由文件引用：[`registerHttpRoutes()`](../gateway/src/routes.ts:14) 使用 [`parseIncomingWorldEvent()`](../gateway/src/httpRoutes.ts:25)、[`buildWsWorldEvent()`](../gateway/src/httpRoutes.ts:72)、[`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:120)。
+  - 被 HTTP 主路由文件引用：[`registerHttpRoutes()`](../gateway/src/routes.ts:14) 使用 [`parseIncomingWorldEvent()`](../gateway/src/httpRoutes.ts:26)、[`buildWsWorldEvent()`](../gateway/src/httpRoutes.ts:73)、[`registerBotHttpProxyRoutes()`](../gateway/src/httpRoutes.ts:121)。
 
 ### 3.11 [`gateway/src/id.ts`](../gateway/src/id.ts)
 
@@ -469,17 +500,17 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
   - logger：`pino`（但 app 本身也启用了 fastify logger）。
   - 本地模块：
     - [`loadConfig()`](../gateway/src/config.ts:45)
-    - [`AstrTownClient`](../gateway/src/astrtownClient.ts:49)
+    - [`AstrTownClient`](../gateway/src/astrtownClient.ts:57)
     - [`ConnectionManager`](../gateway/src/connectionManager.ts:11)
-    - [`createDefaultCommandMapper()`](../gateway/src/commandMapper.ts:62)
-    - [`CommandRouter`](../gateway/src/commandRouter.ts:17)
+    - [`createDefaultCommandMapper()`](../gateway/src/commandMapper.ts:64)
+    - [`CommandRouter`](../gateway/src/commandRouter.ts:42)
     - [`CommandQueue`](../gateway/src/commandQueue.ts:23)
     - [`EventDispatcher`](../gateway/src/eventDispatcher.ts:15)
     - [`BotQueueRegistry`](../gateway/src/queueRegistry.ts:6)
     - [`IdempotencyCache`](../gateway/src/utils.ts:4)
     - [`registerWsRoutes()`](../gateway/src/wsHandler.ts:37)
     - [`registerHttpRoutes()`](../gateway/src/routes.ts:14)
-    - 类型：`WorldEvent` 来自 [`types.ts`](../gateway/src/types.ts:122)
+    - 类型：`WorldEvent` 来自 [`types.ts`](../gateway/src/types.ts:153)
 
 - 导出内容
   - 无（作为应用入口）。
@@ -488,7 +519,8 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
   - 配置加载：[`loadConfig()`](../gateway/src/config.ts:45)。
   - app 初始化：`fastify({ logger, bodyLimit })`。
   - 注册插件：cors、websocket。
-  - 组装核心对象：connections、astr client、mapper、commandQueue、commandRouter、queues、dispatcher。
+  - 组装核心对象：connections、astr client、mapper、commandQueue、queues、dispatcher。
+  - 在 `dispatcher` 初始化之后组装 `commandRouter`，并注入 `connections/worldEventQueues/worldEventDispatcher`，用于社交关系命令本地分支的在线检查与事件投递。
   - 注册 WS 路由：[`registerWsRoutes()`](../gateway/src/wsHandler.ts:37)（传入支持协议版本、心跳参数、核心依赖）。
   - 注册 HTTP 路由：[`registerHttpRoutes()`](../gateway/src/routes.ts:14)（传入 config、astr、connections、queues、dispatcher、commandQueue、idempotency）。
   - listen：`app.listen({port, host:'0.0.0.0'})`。
@@ -541,9 +573,11 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
   - registry.delete：[`BotQueueRegistry.delete()`](../gateway/src/queueRegistry.ts:20)（WS 断开时会调用）。
   - 优先级分类：[`classifyPriority()`](../gateway/src/queueRegistry.ts:25)
     - 若提供 hinted 则直接用。
+    - `conversation.timeout` → 0（最高优先级）。
     - `conversation.*` → 0。
     - `agent.state_changed`：payload.nearbyPlayers 非空 → 1，否则 2。
     - `action.finished` → 2。
+    - `social.relationship_proposed` → 1（社交关系提议优先级提升）。
     - 默认 3。
   - 入队并触发投递：[`enqueueWorldEvent()`](../gateway/src/queueRegistry.ts:37)
     - 调用 [`EventQueue.enqueue()`](../gateway/src/eventQueue.ts:35)，若 dropped 则 warn，并可回调 `onDropOldest`。
@@ -628,10 +662,10 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
   - 常量：`PROTOCOL_VERSION`（见 [`types.ts`](../gateway/src/types.ts:1)）。
   - 基类类型：[`WsMessageBase`](../gateway/src/types.ts:3)、[`WsWorldEventBase`](../gateway/src/types.ts:12)。
   - 世界事件 payload 与 event 类型：
-    - `AgentStateChangedEvent`、`ConversationStartedEvent`、`ConversationInvitedEvent`、`ConversationMessageEvent`、`ActionFinishedEvent`、`AgentQueueRefillRequestedEvent`（见 [`WorldEvent`](../gateway/src/types.ts:122) 联合）。
-  - 命令消息类型：`MoveToCommand/SayCommand/.../DoSomethingCommand`（见 [`types.ts`](../gateway/src/types.ts:130) 起）。
+    - `AgentStateChangedEvent`、`ConversationStartedEvent`、`ConversationInvitedEvent`、`ConversationMessageEvent`、`ActionFinishedEvent`、`AgentQueueRefillRequestedEvent`，以及新增 `SocialRelationshipProposedEvent`、`SocialRelationshipRespondedEvent`（见 [`WorldEvent`](../gateway/src/types.ts:153) 联合）。
+  - 命令消息类型：`MoveToCommand/SayCommand/.../DoSomethingCommand`，并新增 `ProposeRelationshipCommand`、`RespondRelationshipCommand`（见 [`types.ts`](../gateway/src/types.ts:164) 起）。
   - ACK/心跳：`CommandAck`、`EventAck`、`PingMessage/PongMessage`。
-  - 入站/出站联合：[`WsOutboundMessage`](../gateway/src/types.ts:211)、[`WsInboundMessage`](../gateway/src/types.ts:241)。
+  - 入站/出站联合：[`WsOutboundMessage`](../gateway/src/types.ts:255)、[`WsInboundMessage`](../gateway/src/types.ts:290)。
   - 连接状态与会话：`ConnectionState`、`BotBinding`、`BotSession`。
   - 优先级：`EventPriority = 0|1|2|3`。
 
@@ -760,10 +794,14 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
 ### 4.2 命令链路依赖
 
 - WS 入站 `command.*` → [`registerWsRoutes()`](../gateway/src/wsHandler.ts:37) message handler
-  - → [`CommandRouter.handle()`](../gateway/src/commandRouter.ts:77)
+  - → [`CommandRouter.handle()`](../gateway/src/commandRouter.ts:142)
     - → [`CommandQueue.enqueue()`](../gateway/src/commandQueue.ts:32) 串行
-    - → [`CommandMapper`](../gateway/src/commandMapper.ts:31) 生成请求/事件
-    - → [`AstrTownClient.postCommand()`](../gateway/src/astrtownClient.ts:109) / [`AstrTownClient.postCommandBatch()`](../gateway/src/astrtownClient.ts:157)
+    - → 分流：
+      - 社交关系命令（`command.propose_relationship` / `command.respond_relationship`）在 gateway 本地处理：
+        - 目标在线检查：[`ConnectionManager.getByPlayerId()`](../gateway/src/connectionManager.ts:28)
+        - 关系写回（accept 时）：[`AstrTownClient.upsertRelationship()`](../gateway/src/astrtownClient.ts:231)
+        - 社交事件投递：[`enqueueWorldEvent()`](../gateway/src/queueRegistry.ts:44)
+      - 其他命令透传：[`CommandMapper`](../gateway/src/commandMapper.ts:33) + [`AstrTownClient.postCommand()`](../gateway/src/astrtownClient.ts:117) / [`AstrTownClient.postCommandBatch()`](../gateway/src/astrtownClient.ts:165)
     - → 指标：[`commandsTotal`](../gateway/src/metrics.ts:21)、[`commandLatencyMs`](../gateway/src/metrics.ts:27)
   - → WS 回包 `command.ack`
 
@@ -793,15 +831,19 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
 5. 发送 connected：[`buildConnectedMessage()`](../gateway/src/auth.ts:69)。
 6. 说明：当前 WebSocket 连接建立后不再调用任何“外控开关”接口（不调用 `deps.astr.setExternalControl(token, true/false)`；也不再存在 `externalControlReassertTimer` 二次确认）。
 
-### 5.2 命令下发数据流（WS → HTTP）
+### 5.2 命令下发数据流（WS → HTTP/本地分支）
 
 1. 客户端发送 `command.*`（或 `command.batch`）消息。
-2. WS handler 解析后调用 [`CommandRouter.handle()`](../gateway/src/commandRouter.ts:77)。
+2. WS handler 解析后调用 [`CommandRouter.handle()`](../gateway/src/commandRouter.ts:142)。
 3. CommandRouter 将命令封装为 `CommandQueueItem`，入 [`CommandQueue.enqueue()`](../gateway/src/commandQueue.ts:32)。
-4. 队列串行执行：
-   - 构造 idempotencyKey。
-   - 调用 [`AstrTownClient.postCommand()`](../gateway/src/astrtownClient.ts:109) 或 [`AstrTownClient.postCommandBatch()`](../gateway/src/astrtownClient.ts:157)。
-5. gateway 立即回 `command.ack`（语义 `ackSemantics:'queued'`，见 [`CommandAck`](../gateway/src/types.ts:187) 与 [`safeAckSend()`](../gateway/src/commandRouter.ts:49)）。
+4. 队列串行执行并分流：
+   - 社交关系命令（`propose_relationship/respond_relationship`）走本地分支：
+     - 参数校验；
+     - 通过 [`ConnectionManager.getByPlayerId()`](../gateway/src/connectionManager.ts:28) 检查目标在线；
+     - `respond_relationship` 在 `accept=true` 时调用 [`AstrTownClient.upsertRelationship()`](../gateway/src/astrtownClient.ts:231) 写回关系；
+     - 通过 [`enqueueWorldEvent()`](../gateway/src/queueRegistry.ts:44) 投递 `social.relationship_proposed` / `social.relationship_responded`。
+   - 非社交命令：构造 idempotencyKey，调用 [`AstrTownClient.postCommand()`](../gateway/src/astrtownClient.ts:117) 或 [`AstrTownClient.postCommandBatch()`](../gateway/src/astrtownClient.ts:165)。
+5. gateway 回 `command.ack`（语义 `ackSemantics:'queued'`，见 [`CommandAck`](../gateway/src/types.ts:231) 与 [`safeAckSend()`](../gateway/src/commandRouter.ts:74)）。
 
 ### 5.3 世界事件分发数据流（HTTP → WS）
 
@@ -869,7 +911,7 @@ gateway 处在“bot 客户端”和“AstrTown 后端（Convex/botApi）”之�
 - 入口组装：[`gateway/src/index.ts`](../gateway/src/index.ts)
 - WS：[`registerWsRoutes()`](../gateway/src/wsHandler.ts:37)
 - HTTP：[`registerHttpRoutes()`](../gateway/src/routes.ts:14)
-- 命令：[`CommandRouter.handle()`](../gateway/src/commandRouter.ts:77) + [`CommandQueue`](../gateway/src/commandQueue.ts:23) + [`AstrTownClient.postCommand()`](../gateway/src/astrtownClient.ts:109)
+- 命令：[`CommandRouter.handle()`](../gateway/src/commandRouter.ts:142) + [`CommandQueue`](../gateway/src/commandQueue.ts:23) + [`AstrTownClient.postCommand()`](../gateway/src/astrtownClient.ts:117) / [`AstrTownClient.upsertRelationship()`](../gateway/src/astrtownClient.ts:231)
 - 事件：[`enqueueWorldEvent()`](../gateway/src/queueRegistry.ts:37) + [`EventDispatcher.tryDispatch()`](../gateway/src/eventDispatcher.ts:48) + `event.ack` → [`EventDispatcher.onAck()`](../gateway/src/eventDispatcher.ts:26)
 
 # AstrTown 插件模块架构分析
@@ -911,16 +953,16 @@ AstrTown 游戏世界
 |---------|------|--------|----------|
 | [`astrbot_plugin_astrtown/__init__.py`](astrbot_plugin_astrtown/__init__.py) | 10 | 228 | 包初始化，导出 AstrTownPlugin |
 | [`astrbot_plugin_astrtown/_conf_schema.json`](astrbot_plugin_astrtown/_conf_schema.json) | 30 | 860 | 配置项元数据定义 |
-| [`astrbot_plugin_astrtown/main.py`](astrbot_plugin_astrtown/main.py) | 301 | 11234 | 插件主入口，定义 LLM 工具和上下文裁剪 |
+| [`astrbot_plugin_astrtown/main.py`](astrbot_plugin_astrtown/main.py) | 513 | 21002 | 插件主入口：上下文裁剪、动态记忆/社交张力注入、生命周期注入反思回调、LLM 工具定义 |
 | [`astrbot_plugin_astrtown/metadata.yaml`](astrbot_plugin_astrtown/metadata.yaml) | 6 | 279 | 插件元数据 |
-| [`astrbot_plugin_astrtown/SKILL.md`](astrbot_plugin_astrtown/SKILL.md) | 120 | 2405 | NPC 行为指导文档 |
+| [`astrbot_plugin_astrtown/SKILL.md`](astrbot_plugin_astrtown/SKILL.md) | 128 | 2814 | NPC 行为指导文档 |
 | [`astrbot_plugin_astrtown/adapter/__init__.py`](astrbot_plugin_astrtown/adapter/__init__.py) | 6 | 189 | 适配器包初始化 |
-| [`astrbot_plugin_astrtown/adapter/astrtown_adapter.py`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py) | 851 | 33570 | 平台适配器核心实现 |
+| [`astrbot_plugin_astrtown/adapter/astrtown_adapter.py`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py) | 1738 | 69290 | 平台适配器核心实现：WS 事件分发、社交事件处理、会话反思与高阶反思异步流水线 |
 | [`astrbot_plugin_astrtown/adapter/astrtown_event.py`](astrbot_plugin_astrtown/adapter/astrtown_event.py) | 31 | 766 | 消息事件类定义 |
 | [`astrbot_plugin_astrtown/adapter/id_util.py`](astrbot_plugin_astrtown/adapter/id_util.py) | 5 | 98 | ID 生成工具函数 |
-| [`astrbot_plugin_astrtown/adapter/protocol.py`](astrbot_plugin_astrtown/adapter/protocol.py) | 120 | 2397 | WebSocket 协议数据模型 |
+| [`astrbot_plugin_astrtown/adapter/protocol.py`](astrbot_plugin_astrtown/adapter/protocol.py) | 126 | 2541 | WebSocket 协议数据模型 |
 
-**总计**: 10 个文件，1480 行，53928 字符
+**总计**: 10 个文件，2593 行，98067 字符
 
 ---
 
@@ -942,7 +984,7 @@ from .main import AstrTownPlugin
 - `AstrTownPlugin`: 插件主类
 
 #### 文件说明
-简单的包初始化文件，仅导出 [`AstrTownPlugin`](astrbot_plugin_astrtown/main.py:13) 类供 AstrBot 插件系统加载。
+简单的包初始化文件，仅导出 [`AstrTownPlugin`](astrbot_plugin_astrtown/main.py:20) 类供 AstrBot 插件系统加载。
 
 ---
 
@@ -970,155 +1012,93 @@ from .main import AstrTownPlugin
 ### 3.3 [`astrbot_plugin_astrtown/main.py`](astrbot_plugin_astrtown/main.py)
 
 #### 文件基本信息
-- **功能**: 插件主入口，定义 LLM 工具和上下文裁剪
-- **行数**: 301 行
-- **字符数**: 11234 字符
+- **功能**: 插件主入口，负责 LLM 请求前上下文处理、生命周期注入/清理反思回调、以及 AstrTown 侧工具定义。
+- **行数**: 513 行
+- **字符数**: 21002 字符
 
 #### 导入的模块
 ```python
 from __future__ import annotations
+
+import asyncio
 from typing import Any
+from urllib.parse import urlencode, urlparse
+
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 from astrbot.core.config.default import CONFIG_METADATA_2
 from astrbot.core.star.register.star_handler import register_on_llm_request
 from astrbot.api import logger
 ```
+- 可选依赖：`aiohttp`（失败时置 `None`，相关网络增强逻辑自动降级）。
 
 #### 导出的内容
-- `AstrTownPlugin`: 插件主类
+- `AstrTownPlugin`: 插件主类。
 
 #### 定义的类
 
-##### [`AstrTownPlugin`](astrbot_plugin_astrtown/main.py:13)
-继承自 `Star`，是插件的主类。
+##### [`AstrTownPlugin`](astrbot_plugin_astrtown/main.py:20)
+继承自 `Star`，承担插件级配置注入、LLM 请求钩子与工具注册。
 
 **类属性**:
-- `_registered: bool`: 配置注册状态标志
+- `_registered: bool`: 平台配置元数据是否已注入。
 
 **实例属性**:
-- `config: dict`: 插件配置
-- `_injected_config_keys: set[str]`: 已注入的配置键集合
+- `config: dict`: 插件配置。
+- `_injected_config_keys: set[str]`: 已注入配置键集合。
 
-**方法**:
+**关键方法**:
 
-1. [`_astrtown_trim_context_and_inject_memory()`](astrbot_plugin_astrtown/main.py:18)
-   - **装饰器**: `@register_on_llm_request(priority=100)`
-   - **功能**: 在 LLM 请求前裁剪上下文，并以“阅后即焚”的方式注入相关世界记忆（不污染原始 contexts）
+1. [`_astrtown_trim_context_and_inject_memory()`](astrbot_plugin_astrtown/main.py:24)
+   - **装饰器**: `@register_on_llm_request(priority=100)`。
+   - **功能**: 在每次 LLM 请求前做“上下文裁剪 + 动态记忆注入 + 动态社交张力注入”。
    - **实现逻辑**:
-     - 读取 `astrtown_max_context_rounds` 配置，计算 `max_messages = max_rounds * 2`
-     - 分离 system 消息与非 system 消息，仅保留最近 `max_messages` 条非 system 消息
-     - 从保留的消息中逆序提取最新 `role=user` 的发言作为检索 query（长度需 > 2）
-     - 调用 [`adapter.search_world_memory()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:768) 检索世界记忆，并用 `asyncio.wait_for(timeout=2.0)` 做熔断保护
-     - 若检索到记忆：构造临时 `Context(role="system")`（注入提示文案 + 记忆列表），作为“动态记忆上下文”插入
-     - 安全拼接并替换 `request.contexts`：system → 动态记忆(若有) → 最近聊天记录
+     - 读取 `astrtown_max_context_rounds`，得到 `max_messages = max_rounds * 2`。
+     - 分离 `system` 与 `non-system`，仅保留最近非系统消息。
+     - 从最近消息中提取最新 user 文本，调用 [`search_world_memory()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1573) 检索（`asyncio.wait_for(..., timeout=2.0)` 熔断）。
+     - 通过适配器 `_conversation_partner_id` 与事件 payload 推断会话对方，调用 `GET /api/bot/social/state` 拉取关系/好感数据。
+     - 注入 system context：
+       - 记忆片段（潜意识背景）；
+       - 社交张力设定（公开关系 + 私下好感）。
+     - 最终回写 `request.contexts = system + injected + recent`。
 
-2. [`__init__()`](astrbot_plugin_astrtown/main.py:117)
-   - **功能**: 初始化插件，导入适配器
-   - **实现**:
-     - 调用父类初始化
-     - 保存配置引用
-     - 导入 [`AstrTownAdapter`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:71) 触发装饰器注册
+2. [`__init__()`](astrbot_plugin_astrtown/main.py:229)
+   - 调用父类初始化。
+   - 保存配置。
+   - 导入 [`AstrTownAdapter`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:85) 以触发平台装饰器注册。
 
-3. [`_register_config()`](astrbot_plugin_astrtown/main.py:87)
-   - **功能**: 将平台配置项注入到 AstrBot 配置系统
-   - **实现逻辑**:
-     - 检查 `CONFIG_METADATA_2.platform_group.metadata.platform.items` 结构
-     - 将 [`_astrtown_items`](astrbot_plugin_astrtown/main.py:56) 中的配置项注入
-     - 记录已注入的配置键
+3. [`_register_config()`](astrbot_plugin_astrtown/main.py:236)
+   - 将 [`_astrtown_items`](astrbot_plugin_astrtown/main.py:205) 注入 `CONFIG_METADATA_2.platform_group.metadata.platform.items`。
 
-4. [`_unregister_config()`](astrbot_plugin_astrtown/main.py:113)
-   - **功能**: 清理已注入的配置项
-   - **实现逻辑**:
-     - 从配置系统中移除已注入的配置项
-     - 清空已注入键集合
+4. [`_unregister_config()`](astrbot_plugin_astrtown/main.py:262)
+   - 从配置元数据中清除本插件注入项。
 
-5. [`initialize()`](astrbot_plugin_astrtown/main.py:138)
-   - **功能**: 插件初始化
-   - **实现**:
-     - 注册配置项
-     - 提取默认 persona 系统提示词
-     - 将 persona 描述注入到适配器
+5. [`initialize()`](astrbot_plugin_astrtown/main.py:287)
+   - 注册配置项。
+   - 读取默认人格 prompt，调用 [`set_persona_data()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:40) 注入适配器全局 persona。
+   - 注入反思 LLM 回调：调用 [`set_reflection_llm_callback()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:54)，将 provider 的 `text_chat` 封装为异步回调供适配器后台反思任务复用。
 
-6. [`terminate()`](astrbot_plugin_astrtown/main.py:169)
-   - **功能**: 插件终止
-   - **实现**: 清理已注入的配置项
+6. [`terminate()`](astrbot_plugin_astrtown/main.py:331)
+   - 调用 [`set_reflection_llm_callback()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:54) 传入 `None` 清理全局回调。
+   - 注销配置元数据。
 
 #### 定义的 LLM 工具
 
-##### [`recall_past_memory(search_keyword)`](astrbot_plugin_astrtown/main.py:211)
-- **装饰器**: `@filter.llm_tool(name="recall_past_memory")`
-- **功能**: 让大模型在“上下文线索不足但需要努力回想”时，主动深度搜索长期记忆（limit=5）
-- **参数**:
-  - `search_keyword: str`: 检索关键词/线索
-- **实现逻辑**:
-  - 校验当前事件适配器为 `astrtown`
-  - 调用 [`adapter.search_world_memory()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:768) 发起检索（limit=5）
-  - 无结果：返回固定文案 `"你努力回想了很久，但脑海中一片空白。"`
-  - 有结果：格式化为 `"你想起了以下事情：\n- ..."`
-
-##### [`move_to(target_player_id)`](astrbot_plugin_astrtown/main.py:229)
-- **装饰器**: `@filter.llm_tool(name="move_to")`
-- **功能**: 移动到目标玩家附近
-- **参数**:
-  - `target_player_id: str`: 目标玩家 ID
-- **实现**: 调用 `adapter.send_command("command.move_to", {"targetPlayerId": target_player_id})`
-
-##### [`say(conversation_id, text, leave_after)`](astrbot_plugin_astrtown/main.py:191)
-- **装饰器**: `@filter.llm_tool(name="say")`
-- **功能**: 在对话中发送消息
-- **参数**:
-  - `conversation_id: str`: 对话 ID
-  - `text: str`: 消息内容
-  - `leave_after: bool`: 发送后是否离开对话
-- **实现**: 调用 `adapter.send_command("command.say", {"conversationId": conversation_id, "text": text, "leaveAfter": bool(leave_after)})`
-
-##### [`set_activity(description, emoji, duration)`](astrbot_plugin_astrtown/main.py:215)
-- **装饰器**: `@filter.llm_tool(name="set_activity")`
-- **功能**: 设置当前活动状态
-- **参数**:
-  - `description: str`: 活动描述
-  - `emoji: str`: 表情（可为空）
-  - `duration: int`: 持续时间（毫秒）
-- **实现**: 调用 `adapter.send_command("command.set_activity", {"description": description, "emoji": emoji, "duration": duration_ms})`
-
-##### [`accept_invite(conversation_id)`](astrbot_plugin_astrtown/main.py:239)
-- **装饰器**: `@filter.llm_tool(name="accept_invite")`
-- **功能**: 接受对话邀请
-- **参数**:
-  - `conversation_id: str`: 对话 ID
-- **实现**: 调用 `adapter.send_command("command.accept_invite", {"conversationId": conversation_id})`
-
-##### [`invite(target_player_id)`](astrbot_plugin_astrtown/main.py:255)
-- **装饰器**: `@filter.llm_tool(name="invite")`
-- **功能**: 邀请玩家开始对话
-- **参数**:
-  - `target_player_id: str`: 目标玩家 ID
-- **实现**: 调用 `adapter.send_command("command.invite", {"targetPlayerId": target_player_id})`
-
-##### [`leave_conversation(conversation_id)`](astrbot_plugin_astrtown/main.py:271)
-- **装饰器**: `@filter.llm_tool(name="leave_conversation")`
-- **功能**: 离开对话
-- **参数**:
-  - `conversation_id: str`: 对话 ID
-- **实现**: 调用 `adapter.send_command("command.leave_conversation", {"conversationId": conversation_id})`
-
-##### [`do_something(action_type, args)`](astrbot_plugin_astrtown/main.py:287)
-- **装饰器**: `@filter.llm_tool(name="do_something")`
-- **功能**: 发送底层动作请求
-- **参数**:
-  - `action_type: str`: 动作类型名称
-  - `args: dict[str, Any] | None`: 动作参数
-- **实现**: 调用 `adapter.send_command("command.do_something", {"actionType": action_type, "args": args or {}})`
+- 记忆检索：[`recall_past_memory()`](astrbot_plugin_astrtown/main.py:345)
+  - 调用 [`search_world_memory()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1573) 进行深度回忆。
+- 基础行为工具：[`move_to()`](astrbot_plugin_astrtown/main.py:363)、[`say()`](astrbot_plugin_astrtown/main.py:379)、[`set_activity()`](astrbot_plugin_astrtown/main.py:403)、[`accept_invite()`](astrbot_plugin_astrtown/main.py:427)、[`invite()`](astrbot_plugin_astrtown/main.py:443)、[`leave_conversation()`](astrbot_plugin_astrtown/main.py:459)、[`do_something()`](astrbot_plugin_astrtown/main.py:499)。
+- 新增社交关系工具：
+  - [`propose_relationship()`](astrbot_plugin_astrtown/main.py:475) → `command.propose_relationship`
+  - [`respond_relationship()`](astrbot_plugin_astrtown/main.py:487) → `command.respond_relationship`
 
 #### 文件内部关系
-- [`_astrtown_items`](astrbot_plugin_astrtown/main.py:56) 定义了平台配置项元数据
-- [`_astrtown_trim_context_on_llm_request()`](astrbot_plugin_astrtown/main.py:17) 使用配置项进行上下文裁剪
-- 所有 LLM 工具通过 `event.adapter.send_command()` 与适配器交互
+- [`_astrtown_items`](astrbot_plugin_astrtown/main.py:205) 为配置元数据来源。
+- [`_astrtown_trim_context_and_inject_memory()`](astrbot_plugin_astrtown/main.py:24) 同时依赖 `adapter.search_world_memory` 与 `/api/bot/social/state` 结果，统一构建注入上下文。
+- 所有工具最终通过 [`send_command()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:214) 与网关交互。
 
 #### 文件间关系
-- 依赖 [`adapter.astrtown_adapter.AstrTownAdapter`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:71)
-- 依赖 AstrBot 框架的 `Star`、`filter`、`Context` 等 API
+- 强依赖 [`AstrTownAdapter`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:85) 的命令发送、记忆检索、HTTP 基地址推导能力。
+- 生命周期中调用 [`set_persona_data()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:40) 与 [`set_reflection_llm_callback()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:54)，形成“插件注入能力 → 适配器异步任务消费能力”的桥接。
 
 ---
 
@@ -1152,7 +1132,7 @@ repo: https://github.com/your-org/astrbot_plugin_astrtown
 
 #### 新增最高行为准则（与深层记忆网络强绑定）
 - 在文档首个标题之后新增章节：`🚨 【最高行为准则：记忆生成的绝对法则】`
-- 核心约束：当 NPC 认为当前话题告一段落/对方告别/准备去执行物理动作（移动、工作）前，**必须主动调用** [`leave_conversation()`](astrbot_plugin_astrtown/main.py:325) 退出当前对话
+- 核心约束：当 NPC 认为当前话题告一段落/对方告别/准备去执行物理动作（移动、工作）前，**必须主动调用** [`leave_conversation()`](astrbot_plugin_astrtown/main.py:459) 退出当前对话
 - 目的：只有显式退出对话，底层“记忆回溯与反思”算法才会被触发，从而把当前对话归档为长期深层记忆；避免长时间停留在对话中导致记忆无法沉淀
 
 #### 文档结构
@@ -1213,20 +1193,22 @@ from .astrtown_event import AstrTownMessageEvent
 ### 3.7 [`astrbot_plugin_astrtown/adapter/astrtown_adapter.py`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py)
 
 #### 文件基本信息
-- **功能**: 平台适配器核心实现
-- **行数**: 851 行
-- **字符数**: 33570 字符
+- **功能**: 平台适配器核心实现（WS 连接、事件分发、社交事件系统消息化、异步反思流水线）。
+- **行数**: 1738 行
+- **字符数**: 69290 字符
 
 #### 导入的模块
 ```python
 from __future__ import annotations
+
 import asyncio
 import json
 import random
 import time
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
 from astrbot import logger
 from astrbot.api.message_components import Plain
 from astrbot.api.platform import (
@@ -1256,9 +1238,13 @@ from .id_util import new_id
 - `AstrTownAdapter`: 平台适配器类
 - `set_persona_data()`: 设置 persona 数据
 - `get_persona_data()`: 获取 persona 数据
+- `set_reflection_llm_callback()`: 设置反思 LLM 回调
+- `get_reflection_llm_callback()`: 获取反思 LLM 回调
 
 #### 全局变量
 - `_PERSONA_DESCRIPTION: str | None`: 全局 persona 描述
+- `ReflectLLMCallback = Callable[[str], Awaitable[Any]]`: 反思回调类型别名
+- `_REFLECTION_LLM_CALLBACK: ReflectLLMCallback | None`: 全局反思回调句柄
 
 #### 定义的函数
 
@@ -1271,9 +1257,17 @@ from .id_util import new_id
 - **功能**: 获取全局 persona 描述
 - **返回**: `str | None`
 
+##### [`set_reflection_llm_callback(callback)`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:54)
+- **功能**: 注册/清理反思 LLM 回调（`None` 表示清理）
+- **参数**: `callback: ReflectLLMCallback | None`
+
+##### [`get_reflection_llm_callback()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:59)
+- **功能**: 获取当前反思回调句柄
+- **返回**: `ReflectLLMCallback | None`
+
 #### 定义的类
 
-##### [`AstrTownAdapter`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:71)
+##### [`AstrTownAdapter`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:85)
 继承自 `Platform`，是 AstrTown 平台适配器的核心类。
 
 **装饰器**:
@@ -1294,6 +1288,7 @@ from .id_util import new_id
 - `settings: dict`: 平台设置
 - `_session_event_count: dict[str, int]`: 会话事件计数器
 - `_active_conversation_id: str | None`: 当前活跃对话 ID
+- `_conversation_partner_id: str | None`: 当前会话对方 playerId（供动态社交张力注入与反思使用）
 - `gateway_url: str`: Gateway 地址
 - `token: str`: 鉴权 Token
 - `subscribe: str`: 订阅事件（固定为 "*"）
@@ -1311,10 +1306,17 @@ from .id_util import new_id
 - `_player_name: str | None`: 玩家名称
 - `_negotiated_version: int | None`: 协商的协议版本
 - `_last_refill_wake_ts: float`: 上次队列补充唤醒时间戳
+- `_queue_refill_gate_last_log_ts: float`: queue_refill 门控日志节流时间
+- `_queue_refill_gate_last_should_wake: bool | None`: 上次门控状态
+- `_queue_refill_gate_skip_count: int`: 连续跳过计数
+- `_event_ack_last_log_ts: float`: ACK 采样日志时间
+- `_event_ack_sample_count: int`: ACK 采样计数
+- `_importance_accumulator: float`: 反思重要度累计值
+- `_reflection_threshold: float`: 触发高阶反思阈值
 
 **方法**:
 
-1. [`__init__()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:72)
+1. [`__init__()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:86)
    - **功能**: 初始化适配器
    - **参数**:
      - `platform_config: dict`: 平台配置
@@ -1414,29 +1416,28 @@ from .id_util import new_id
     - **参数**: `data: dict[str, Any]`
     - **实现**: 发送 pong 响应
 
-15. [`_handle_world_event(data)`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:494)
+15. [`_handle_world_event(data)`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:529)
     - **功能**: 处理世界事件
     - **参数**: `data: dict[str, Any]`
     - **实现逻辑**:
-      - 解析事件数据
-      - 对 `conversation.message` 进行前置过滤
-      - 更新活跃对话状态
-      - 处理 `conversation.invited`（自动接受/LLM 判断）
-- 处理 `conversation.timeout`（对话超时兜底）：清理活跃对话 ID，并以系统提示文本构造 `AstrTownMessageEvent` 提交，唤醒 LLM 打破死锁
-- 对 `agent.queue_refill_requested` 进行降噪门控
-- 处理 `action.finished` 的过期反馈：当 `success=false & result.reason='expired'` 时仅打印 warning（指令已过期被丢弃）
-- 格式化事件为文本
-- 构建会话 ID
-      - 更新会话事件计数器
-      - 创建 [`AstrTownMessageEvent`](astrbot_plugin_astrtown/adapter/astrtown_event.py:6) 并提交
-      - 发送事件 ACK
+      - 解析事件数据。
+      - `conversation.message` 前置过滤：不属于 `_active_conversation_id` 的消息仅 ACK 不唤醒。
+      - 会话状态维护：`conversation.started/ended/timeout` 更新 `_active_conversation_id`。
+      - 会话对方追踪：在 `conversation.message`（speaker）、`conversation.invited`（inviter）、`conversation.started`（other ids）维护 `_conversation_partner_id`。
+      - `conversation.ended`：提取对话记录并异步触发 [`_async_reflect_on_conversation()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1304)。
+      - `conversation.timeout`：转系统消息提交到 AstrBot，并强制唤醒 LLM。
+      - `social.relationship_proposed`：转系统提示并注入 `proposer_id/relationship_status/priority=high`，强制唤醒 LLM 进行 `respond_relationship` 决策。
+      - `social.relationship_responded`：转系统提示并注入 `responder_id/relationship_status/relationship_accept`，强制唤醒 LLM 做后续反应。
+      - `agent.queue_refill_requested`：按最小间隔门控，静默丢弃路径只 ACK。
+      - `action.finished`：记录过期动作告警（`success=false & result.reason='expired'`）。
+      - 通用路径：格式化文本 → 构建 session id → commit_event → 发送 event ACK。
 
-16. [`_send_event_ack(event_id)`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:703)
+16. [`_send_event_ack(event_id)`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1039)
     - **功能**: 发送事件 ACK
     - **参数**: `event_id: str`
     - **实现**: 发送 `event.ack` 消息
 
-17. [`_build_session_id(_event_type, payload)`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:723)
+17. [`_build_session_id(_event_type, payload)`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1528)
     - **功能**: 构建会话 ID
     - **参数**:
       - `_event_type: str`: 事件类型
@@ -1447,7 +1448,7 @@ from .id_util import new_id
       - `unique_session=False`: 按 world 隔离
       - `unique_session=True`: 按 world + player 隔离
 
-18. [`_build_http_base_url()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:747)
+18. [`_build_http_base_url()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1552)
    - **功能**: 将 `self.gateway_url` 规范化为 http/https base url（兼容 ws/wss 误配）
    - **返回**: `str`
    - **实现逻辑**:
@@ -1455,7 +1456,7 @@ from .id_util import new_id
      - `ws://...` → `http://...`
      - 解析失败时 best-effort 回退为原字符串
 
-19. [`search_world_memory(query_text, limit=3)`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:768)
+19. [`search_world_memory(query_text, limit=3)`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1573)
    - **功能**: 向 Gateway 发起“世界记忆检索”HTTP 请求，返回记忆片段列表（任何异常/非 2xx 统一降级为空列表）
    - **HTTP**: `POST /api/bot/memory/search`
    - **认证**: `Authorization: Bearer {token}`
@@ -1463,33 +1464,76 @@ from .id_util import new_id
    - **超时保护**: `aiohttp.ClientTimeout(total=3.0)`
    - **返回**: `list[dict]`（从响应 JSON 的 `memories` 字段提取，元素形如 `{description, importance}`）
 
-20. [`_sync_persona_to_gateway(player_id)`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:814)
+20. [`_sync_persona_to_gateway(player_id)`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1619)
    - **功能**: 将 persona 描述同步到 Gateway
    - **参数**: `player_id: str | None`
    - **实现**:
      - 通过 HTTP POST 发送 persona 描述
      - 使用 Bearer Token 认证
 
-21. [`_format_event_to_text(event_type, payload)`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:857)
+21. [`_format_event_to_text(event_type, payload)`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1662)
     - **功能**: 将事件格式化为文本（供 LLM 理解）
     - **参数**:
       - `event_type: str`: 事件类型
       - `payload: dict[str, Any]`: 事件载荷
     - **返回**: `str`
-    - **实现**: 根据事件类型返回不同的文本格式
+    - **实现**: 根据事件类型返回不同文本；已覆盖 `social.relationship_proposed` 与 `social.relationship_responded` 文案。
+
+22. [`_pick_first_non_empty_str()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1069)
+    - **功能**: 多候选键中提取首个非空字符串。
+
+23. [`_extract_conversation_messages()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1079)
+    - **功能**: 从结束事件 payload 中抽取标准化对话消息列表。
+
+24. [`_build_reflection_prompt()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1111)
+    - **功能**: 生成“会话反思”提示词，要求 JSON 输出 `summary/importance/affinity_delta/affinity_label`。
+
+25. [`_normalize_reflection_response()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1159)
+    - **功能**: 兼容解析 callback 输出（dict/字符串/completion_text），归一化并做数值范围约束。
+
+26. [`_normalize_higher_reflection_response()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1238)
+    - **功能**: 解析高阶反思返回的 insights 数组，去重并截断（最多 5 条）。
+
+27. [`_post_json_best_effort()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1281)
+    - **功能**: 统一 HTTP POST best-effort 封装，失败只记录告警并返回 `False`。
+
+28. [`_async_reflect_on_conversation()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1304)
+    - **功能**: 对话结束后异步反思任务。
+    - **数据流**:
+      - 读取全局 callback：[`get_reflection_llm_callback()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:59)。
+      - LLM 反思 → 归一化结果。
+      - 写入 `POST /api/bot/memory/inject`（conversation memory）。
+      - 写入 `POST /api/bot/social/affinity`（好感度变化 + 标签）。
+      - 累计 importance，达到阈值后触发 [`_async_higher_reflection()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1417)。
+
+29. [`_async_higher_reflection()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1417)
+    - **功能**: 高阶反思任务。
+    - **数据流**:
+      - 拉取 `GET /api/bot/memory/recent?worldId&playerId&count=50`。
+      - callback 生成高层洞察 insights。
+      - 循环写入 `POST /api/bot/memory/inject`（`memoryType='reflection'`，`importance=10`）。
 
 #### 文件内部关系
-- [`_PERSONA_DESCRIPTION`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:37) 全局变量用于存储 persona 描述
-- [`set_persona_data()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:40) 和 [`get_persona_data()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:46) 用于管理 persona 数据
-- [`AstrTownAdapter`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:71) 类内部方法相互协作完成 WebSocket 连接、消息处理、事件投递等功能
+- [`_PERSONA_DESCRIPTION`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:37) + [`set_persona_data()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:40)/[`get_persona_data()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:46) 管理 persona 全局数据。
+- `_REFLECTION_LLM_CALLBACK` + [`set_reflection_llm_callback()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:54)/[`get_reflection_llm_callback()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:59) 管理反思回调句柄。
+- [`_handle_world_event()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:529) 是事件总入口，触发普通事件投递与反思异步支线。
+- 反思支线：`conversation.ended` -> [`_async_reflect_on_conversation()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1304) -> （阈值满足）[`_async_higher_reflection()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1417)。
 
 #### 文件间关系
-- 依赖 [`adapter.protocol`](astrbot_plugin_astrtown/adapter/protocol.py) 中的数据模型
-- 依赖 [`adapter.astrtown_event.AstrTownMessageEvent`](astrbot_plugin_astrtown/adapter/astrtown_event.py:6)
-- 依赖 [`adapter.id_util.new_id()`](astrbot_plugin_astrtown/adapter/id_util.py:4)
-- 依赖 AstrBot 框架的 `Platform`、`AstrBotMessage` 等 API
-- 依赖 `websockets` 库进行 WebSocket 通信
-- 依赖 `aiohttp` 库进行 HTTP 通信（可选）
+- 依赖 [`adapter.protocol`](astrbot_plugin_astrtown/adapter/protocol.py:1) 中的数据模型。
+- 依赖 [`adapter.astrtown_event.AstrTownMessageEvent`](astrbot_plugin_astrtown/adapter/astrtown_event.py:6)。
+- 依赖 [`adapter.id_util.new_id()`](astrbot_plugin_astrtown/adapter/id_util.py:4)。
+- 依赖 AstrBot 框架 `Platform`、`AstrBotMessage` 等 API。
+- 依赖 `websockets` 进行 WS 通信，`aiohttp` 进行 HTTP 通信（可选）。
+- 与 [`main.py`](astrbot_plugin_astrtown/main.py:287) 双向协作：
+  - `main` 在 initialize/terminate 注入并清理 reflection callback；
+  - adapter 在异步反思任务中消费 callback。
+- 与 gateway HTTP 交互端点：
+  - `POST /api/bot/description/update`（persona 同步）
+  - `POST /api/bot/memory/search`（记忆检索）
+  - `POST /api/bot/memory/inject`（反思记忆写入）
+  - `POST /api/bot/social/affinity`（好感回写）
+  - `GET /api/bot/memory/recent`（高阶反思输入）
 
 ---
 
@@ -1763,7 +1807,9 @@ astrbot_plugin_astrtown/
 │
 ├── main.py
 │   ├── imports: adapter.astrtown_adapter.AstrTownAdapter
-│   └── depends: AstrBot framework (Star, filter, Context, etc.)
+│   ├── lifecycle: set_persona_data() + set_reflection_llm_callback()/clear
+│   ├── llm-hook: _astrtown_trim_context_and_inject_memory()
+│   └── tools: recall/move/say/.../propose_relationship/respond_relationship
 │
 ├── metadata.yaml
 │   └── standalone: plugin metadata
@@ -1780,10 +1826,10 @@ astrbot_plugin_astrtown/
     │   └── imports: astrtown_event.AstrTownMessageEvent
     │
     ├── astrtown_adapter.py
-    │   ├── imports: protocol (ConnectedMessage, CommandAck, etc.)
-    │   ├── imports: astrtown_event.AstrTownMessageEvent
-    │   ├── imports: id_util.new_id
-    │   └── depends: AstrBot framework (Platform, AstrBotMessage, etc.)
+    │   ├── websocket: _ws_loop/_ws_connect_once/_handle_ws_message/_handle_world_event
+    │   ├── reflection: _async_reflect_on_conversation/_async_higher_reflection
+    │   ├── callback: get_reflection_llm_callback()
+    │   └── http: /api/bot/memory/search|inject|recent + /api/bot/social/state|affinity
     │
     ├── astrtown_event.py
     │   └── depends: AstrBot framework (AstrMessageEvent)
@@ -1798,7 +1844,7 @@ astrbot_plugin_astrtown/
 ### 4.2 类继承关系
 
 ```
-AstrBotMessageEvent (AstrBot framework)
+AstrMessageEvent (AstrBot framework)
     ↑
     |
 AstrTownMessageEvent
@@ -1822,23 +1868,22 @@ AstrTownPlugin
 ```
 AstrBot 主程序
     ↓ 加载插件
-AstrTownPlugin (main.py)
-    ↓ 初始化时导入
-AstrTownAdapter (adapter/astrtown_adapter.py)
-    ↓ 注册为平台适配器
-AstrBot 平台系统
-    ↓ 运行适配器
-WebSocket 连接到 Gateway
-    ↓ 接收世界事件
-AstrTownMessageEvent (adapter/astrtown_event.py)
-    ↓ 投递到事件总线
-AstrBot LLM 系统
-    ↓ 调用工具
-AstrTownPlugin LLM Tools (main.py)
-    ↓ 通过 adapter.send_command()
-Gateway
-    ↓ 执行命令
-AstrTown 游戏世界
+AstrTownPlugin.initialize()
+    ↓ 注入 persona + reflection callback
+AstrTownAdapter (平台适配器)
+    ↓ WS 连接 Gateway，接收 world event
+_handle_world_event()
+    ↓
+    ├─ 常规路径：格式化事件 -> AstrTownMessageEvent -> commit_event -> LLM/工具调用
+    ├─ social.*：转系统提示并强制唤醒决策（respond_relationship 等）
+    └─ conversation.ended：异步触发反思流水线
+           ↓
+           _async_reflect_on_conversation()
+           ├─ POST /api/bot/memory/inject
+           ├─ POST /api/bot/social/affinity
+           └─ (阈值满足) _async_higher_reflection()
+                 ├─ GET /api/bot/memory/recent
+                 └─ POST /api/bot/memory/inject (reflection)
 ```
 
 ---
@@ -1856,17 +1901,17 @@ AstrTown 游戏世界
    ↓
 4. 调用 AstrTownPlugin.__init__()
    ↓
-5. 导入 adapter.astrtown_adapter.AstrTownAdapter
+5. 导入 adapter.astrtown_adapter.AstrTownAdapter（触发平台注册）
    ↓
-6. @register_platform_adapter 装饰器注册适配器
+6. 调用 AstrTownPlugin.initialize()
    ↓
-7. 调用 AstrTownPlugin.initialize()
+7. _register_config() 注入配置项到 CONFIG_METADATA_2
    ↓
-8. _register_config() 注入配置项到 CONFIG_METADATA_2
+8. 提取 persona_manager.get_default_persona_v3()
    ↓
-9. 提取 persona_manager.get_default_persona_v3()
+9. set_persona_data() 设置全局 persona 描述
    ↓
-10. set_persona_data() 设置全局 persona 描述
+10. set_reflection_llm_callback() 注入反思回调
    ↓
 11. AstrBot 启动 AstrTownAdapter.run()
 ```
@@ -1890,7 +1935,7 @@ AstrTown 游戏世界
    ↓
 8. 保存 agentId、playerId、worldId 等
    ↓
-9. （可选）同步 persona/人设数据到网关（若插件实现了对应 HTTP 同步能力）
+9. _sync_persona_to_gateway(playerId) 同步 persona（best-effort）
    ↓
 10. 进入消息接收循环
 ```
@@ -1900,33 +1945,23 @@ AstrTown 游戏世界
 ### 5.3 世界事件处理流程
 
 ```
-1. Gateway 推送世界事件
+1. Gateway 推送 world event
    ↓
 2. _ws_connect_once() 接收原始消息
    ↓
 3. _handle_ws_message() 根据 type 分发
    ↓
-4. _handle_world_event() 处理世界事件
+4. _handle_world_event() 总入口处理
    ↓
-5. conversation.message 前置过滤
+5. conversation.message 前置过滤 + 会话状态维护
    ↓
-6. 更新 _active_conversation_id
+6. social.relationship_proposed/responded 转系统消息并强制唤醒决策
    ↓
-7. conversation.invited 自动接受/LLM 判断
+7. conversation.ended 提取记录并异步触发 _async_reflect_on_conversation()
    ↓
-8. agent.queue_refill_requested 降噪门控
+8. 常规路径：_format_event_to_text() -> _build_session_id() -> commit_event()
    ↓
-9. _format_event_to_text() 格式化为文本
-   ↓
-10. _build_session_id() 构建会话 ID
-   ↓
-11. 更新 _session_event_count
-   ↓
-12. 创建 AstrTownMessageEvent
-   ↓
-13. commit_event() 投递到事件总线
-   ↓
-14. _send_event_ack() 发送 ACK
+9. _send_event_ack() 发送 ACK
 ```
 
 ### 5.4 LLM 工具调用流程
@@ -1959,30 +1994,49 @@ AstrTown 游戏世界
 13. LLM 收到工具调用结果
 ```
 
-### 5.5 上下文裁剪与“动态记忆注入”流程
+### 5.5 上下文裁剪与“动态记忆 + 社交张力注入”流程
 
-> 说明：这里的“记忆注入”是**插件侧**在 AstrBot LLM 请求链路中做的上下文增强。
-> 它通过调用“记忆存取接口”（例如 Gateway 的记忆检索 HTTP）把相关记忆片段**作为额外上下文**提供给模型；
-> 并不意味着 AstrTown 引擎会自主拼接 prompt 或自主生成 NPC 对话。
+> 说明：这里的注入均发生在**插件侧** AstrBot LLM 请求链路中，用于上下文增强；
+> 不代表 AstrTown 引擎会自主拼接 prompt 或自主生成 NPC 对话。
 
 ```
 1. LLM 请求前触发（AstrBot 回调）
    ↓
 2. _astrtown_trim_context_and_inject_memory() 被调用
    ↓
-3. 读取 astrtown_max_context_rounds 配置，计算 max_messages=max_rounds*2
+3. 读取 astrtown_max_context_rounds，裁剪非 system 历史
    ↓
-4. 分离 system / non-system 消息，保留最近 max_messages 条聊天记录
+4. 提取最新 user 发言 -> adapter.search_world_memory(...)
    ↓
-5. 从保留记录中提取最新 user 发言（长度>2）作为 query
+5. 超时/异常熔断（wait_for 2s），无结果则跳过记忆注入
    ↓
-6. 调用 adapter.search_world_memory(query, limit=3)（记忆检索接口）
+6. 若可识别会话对方：GET /api/bot/social/state 获取关系与好感
    ↓
-7. asyncio.wait_for(timeout=2.0) 熔断：超时/异常直接降级为无记忆
+7. 构造 system 注入：记忆片段 + 社交张力（公开关系/私下好感）
    ↓
-8. 有记忆：创建临时 Context(role=system) 注入（阅后即焚，不修改原 contexts）
+8. 重组 request.contexts：system -> 注入片段 -> recent non-system
+```
+
+### 5.6 对话结束反思流水线
+
+```
+1. _handle_world_event() 收到 conversation.ended
    ↓
-9. 重新拼接 request.contexts：system → 动态记忆(可选) → 聊天记录
+2. _extract_conversation_messages() 标准化对话记录
+   ↓
+3. create_task(_async_reflect_on_conversation(...)) 异步启动
+   ↓
+4. get_reflection_llm_callback() 取回调并生成反思结果
+   ↓
+5. POST /api/bot/memory/inject 写入 conversation memory
+   ↓
+6. POST /api/bot/social/affinity 写入好感变化
+   ↓
+7. importance 累计达到阈值 -> _async_higher_reflection()
+   ↓
+8. GET /api/bot/memory/recent 拉取近期记忆
+   ↓
+9. 生成 insights 并逐条 POST /api/bot/memory/inject (memoryType=reflection)
 ```
 
 ---
@@ -2002,156 +2056,71 @@ delay = reconnect_min_delay
 while not stop:
     try:
         await _ws_connect_once()
-        delay = reconnect_min_delay  # 成功后重置延迟
+        delay = reconnect_min_delay
     except Exception:
-        jitter = random.random() * 0.3 + 0.85  # 0.85-1.15 之间
+        jitter = random.random() * 0.3 + 0.85
         sleep_s = min(delay * jitter, reconnect_max_delay)
         await asyncio.sleep(sleep_s)
-        delay = min(delay * 2.0, reconnect_max_delay)  # 指数退避
+        delay = min(delay * 2.0, reconnect_max_delay)
 ```
-
-**特点**:
-- 初始延迟为 `reconnect_min_delay`（默认 1 秒）
-- 每次失败后延迟翻倍，直到达到 `reconnect_max_delay`（默认 30 秒）
-- 添加 15% 的随机抖动，避免多个客户端同时重连
-- 成功连接后重置延迟
 
 ### 6.2 会话 ID 构建算法
 
-**位置**: [`_build_session_id()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:723)
+**位置**: [`_build_session_id()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1528)
 
 **算法描述**:
-根据配置构建不同隔离级别的会话 ID，支持按世界隔离或按世界+玩家隔离。
+根据 `unique_session` 配置构建会话 ID，支持“按 world”或“按 world+player”隔离。
 
-**实现逻辑**:
-```python
-unique_session = settings.get("unique_session", False)
+### 6.3 上下文裁剪 + 动态记忆/社交张力注入算法
 
-if not unique_session:
-    sid = f"astrtown:world:{world_id}"
-else:
-    if player_id:
-        sid = f"astrtown:world:{world_id}:player:{player_id}"
-    else:
-        sid = f"astrtown:world:{world_id}"
-```
-
-**特点**:
-- `unique_session=False`: 所有 NPC 共享同一个会话（按 world 隔离）
-- `unique_session=True`: 每个 NPC 有独立会话（按 world + player 隔离）
-- 受 AstrBot 全局 `unique_session` 设置控制
-
-### 6.3 上下文裁剪 + 动态记忆注入算法
-
-**位置**: [`_astrtown_trim_context_and_inject_memory()`](astrbot_plugin_astrtown/main.py:18)
+**位置**: [`_astrtown_trim_context_and_inject_memory()`](astrbot_plugin_astrtown/main.py:24)
 
 **算法描述**:
-在 LLM 请求前对 contexts 做裁剪，并根据“最新用户发言”检索世界记忆，把检索结果以临时 system Context 的方式插入到上下文中。
+在 LLM 请求前裁剪上下文；以最近 user 文本检索记忆，并结合会话对方拉取社交关系/好感，注入 system context。
 
-**实现逻辑（关键点）**:
-```python
-max_rounds = int(config.get("astrtown_max_context_rounds", 50) or 50)
-max_messages = max_rounds * 2
-
-system_msgs = [m for m in contexts if getattr(m, "role", None) == "system"]
-non_system_msgs = [m for m in contexts if getattr(m, "role", None) != "system"]
-kept_non_system = non_system_msgs[-max_messages:]
-
-# 从 kept_non_system 中提取最新 user 发言做 query
-# 调用 adapter.search_world_memory，并用 asyncio.wait_for(timeout=2.0) 熔断
-# 有结果则构造 Context(role="system", content=...) 作为 injected_memory_context
-
-request.contexts = [*system_msgs, *( [injected_memory_context] if injected_memory_context else [] ), *kept_non_system]
-```
-
-**特点**:
-- 保留所有 system 消息
-- 保留最近的 N 条非 system 消息（N = max_rounds * 2）
-- **阅后即焚**：不就地修改原 `contexts` 列表元素，而是构造 `new_contexts` 并整体替换 `request.contexts`
-- **双重超时保护**：
-  - 适配器 HTTP 请求层 `aiohttp.ClientTimeout(total=3.0)`
-  - 插件注入层 `asyncio.wait_for(timeout=2.0)`
-- 注入内容为 system role，但语义上要求模型“仅在相关时自然体现记得；不相关则忽略”，并显式禁止泄露提示词来源
+**关键点**:
+- 记忆检索：[`search_world_memory()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1573) + `asyncio.wait_for(2.0)`。
+- 社交状态：`GET /api/bot/social/state`。
+- 注入内容：记忆片段 + 社交张力（公开关系 + 私下好感）。
 
 ### 6.4 邀请决策算法
 
-**位置**: [`_handle_world_event()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:550)
+**位置**: [`_handle_world_event()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:529)
 
 **算法描述**:
-根据配置决定如何处理对话邀请：自动接受或交给 LLM 判断。
-
-**实现逻辑**:
-```python
-invite_mode = config.get("astrtown_invite_decision_mode", "auto_accept")
-
-if invite_mode == "auto_accept":
-    # 直接发送命令，不经过 LLM
-    await send_command("command.accept_invite", {"conversationId": conversation_id})
-    _active_conversation_id = conversation_id
-    await _send_event_ack(event_id)
-    return  # 不 commit_event，不唤醒 LLM
-
-# llm_judge 模式：正常流程，commit_event 唤醒 LLM
-```
-
-**特点**:
-- `auto_accept` 模式：自动接受邀请，不消耗 LLM 资源
-- `llm_judge` 模式：交给 LLM 判断是否接受
-- 自动接受后更新 `_active_conversation_id`
+根据 `astrtown_invite_decision_mode` 选择自动接受或交给 LLM 决策。
 
 ### 6.5 队列补充降噪算法
 
-**位置**: [`_handle_world_event()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:585)
+**位置**: [`_handle_world_event()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:529)
 
 **算法描述**:
-对 `agent.queue_refill_requested` 事件进行降噪，避免频繁唤醒 LLM。
-
-**实现逻辑**:
-```python
-refill_enabled = config.get("astrtown_refill_wake_enabled", True)
-if not refill_enabled:
-    await _send_event_ack(event_id)
-    return  # 直接丢弃
-
-min_interval = config.get("astrtown_refill_min_wake_interval_sec", 30)
-now = time.time()
-elapsed = now - _last_refill_wake_ts
-
-if elapsed < min_interval:
-    await _send_event_ack(event_id)
-    return  # 未达到最小间隔，丢弃
-
-_last_refill_wake_ts = now  # 更新最后唤醒时间
-```
-
-**特点**:
-- 可通过配置关闭队列补充唤醒
-- 设置最小唤醒间隔（默认 30 秒）
-- 只在达到最小间隔后才唤醒 LLM
+对 `agent.queue_refill_requested` 做最小间隔门控，未满足条件时仅 ACK，不唤醒 LLM。
 
 ### 6.6 对话消息过滤算法
 
-**位置**: [`_handle_world_event()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:522)
+**位置**: [`_handle_world_event()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:529)
 
 **算法描述**:
-过滤不属于当前 NPC 活跃对话的消息，避免误唤醒 LLM。
+过滤不属于当前活跃会话的 `conversation.message`，降低误唤醒。
 
-**实现逻辑**:
-```python
-if event_type == "conversation.message":
-    incoming_cid = payload.get("conversationId")
-    active_cid = _active_conversation_id
+### 6.7 社交关系事件强制唤醒算法
 
-    if active_cid and incoming_cid and incoming_cid != active_cid:
-        await _send_event_ack(event_id)
-        return  # 不属于当前对话，丢弃
-```
+**位置**: [`_handle_world_event()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:529)
 
-**特点**:
-- 维护 `_active_conversation_id` 记录当前活跃对话
-- 收到 `conversation.started` 时更新
-- 收到 `conversation.ended` 时清空
-- 只处理属于当前对话的消息
+**算法描述**:
+将 `social.relationship_proposed/responded` 转换为系统消息，并通过事件 metadata 强制唤醒 LLM，驱动及时关系决策与响应。
+
+### 6.8 对话反思与高阶反思算法
+
+**位置**: [`_async_reflect_on_conversation()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1304)、[`_async_higher_reflection()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1417)
+
+**算法描述**:
+- 会话反思：对 `conversation.ended` 的消息记录做 LLM 归纳，输出 `summary/importance/affinity_delta/affinity_label`。
+- 副作用写回：
+  - `POST /api/bot/memory/inject`（conversation memory）
+  - `POST /api/bot/social/affinity`（好感变化）
+- 高阶反思：当累计 importance 达阈值后，拉取近期记忆 `GET /api/bot/memory/recent` 生成 insights，再写回 reflection memory。
 
 ---
 
@@ -2206,6 +2175,8 @@ if event_type == "conversation.message":
 | `command.accept_invite` | 接受邀请 |
 | `command.invite` | 邀请玩家 |
 | `command.leave_conversation` | 离开对话 |
+| `command.propose_relationship` | 发起社交关系提议（目标 playerId + 关系状态） |
+| `command.respond_relationship` | 响应社交关系提议（提议者 playerId + 是否接受） |
 | `command.do_something` | 底层动作 |
 | `event.ack` | 事件确认 |
 | `pong` | Ping 响应 |
@@ -2220,9 +2191,11 @@ if event_type == "conversation.message":
 | `command.ack` | 命令确认 |
 | `conversation.invited` | 对话邀请 |
 | `conversation.started` | 对话开始 |
-| `conversation.ended` | 对话结束 |
+| `conversation.ended` | 对话结束（触发异步会话反思任务） |
 | `conversation.message` | 对话消息 |
 | `conversation.timeout` | 对话超时兜底强打断（invite_timeout / idle_timeout），插件会清理活跃对话状态并以系统提示唤醒 LLM |
+| `social.relationship_proposed` | 社交关系提议事件，转系统提示并强制唤醒 LLM 做响应决策 |
+| `social.relationship_responded` | 社交关系响应事件，转系统提示并强制唤醒 LLM 做后续反应 |
 | `agent.state_changed` | Agent 状态变化 |
 | `agent.queue_refill_requested` | 队列补充请求 |
 | `action.finished` | 动作完成（当 `success=false & result.reason='expired'` 时表示指令过期被丢弃，插件仅告警记录） |
@@ -2247,66 +2220,49 @@ ws://gateway_host:port/ws/bot?token={token}&v={version_range}&subscribe={subscri
 ### 9.1 模块特点
 
 1. **清晰的分层架构**
-   - 插件层（[`AstrTownPlugin`](astrbot_plugin_astrtown/main.py:13)）：提供 LLM 工具和配置管理
-   - 适配器层（[`AstrTownAdapter`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:71)）：处理 WebSocket 连接和事件转换
-   - 协议层（[`protocol.py`](astrbot_plugin_astrtown/adapter/protocol.py)）：定义数据模型
+   - 插件层（[`AstrTownPlugin`](astrbot_plugin_astrtown/main.py:20)）：提供 LLM 工具、请求前上下文增强与生命周期注入能力
+   - 适配器层（[`AstrTownAdapter`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:85)）：处理 WS 协议、事件投递与异步反思任务
+   - 协议层（[`protocol.py`](astrbot_plugin_astrtown/adapter/protocol.py:1)）：定义消息模型
 
-2. **完善的类型安全**
-   - 使用 TypedDict 和 dataclass 定义协议数据结构
-   - 类型注解覆盖所有函数和方法
+2. **新增社交关系闭环**
+   - 工具侧新增 `propose_relationship/respond_relationship`（见 [`main.py`](astrbot_plugin_astrtown/main.py:475)）
+   - 事件侧支持 `social.relationship_proposed/responded` 系统消息化与强制唤醒（见 [`_handle_world_event()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:529)）
 
-3. **健壮的错误处理**
-   - WebSocket 自动重连（指数退避）
-   - 命令超时处理
-   - 配置项默认值和验证
+3. **新增反思与记忆沉淀能力**
+   - initialize/terminate 注入并清理全局 reflection callback（见 [`initialize()`](astrbot_plugin_astrtown/main.py:287)、[`terminate()`](astrbot_plugin_astrtown/main.py:331)）
+   - `conversation.ended` 触发异步反思，写回记忆与好感，并在阈值到达时执行高阶反思。
 
-4. **灵活的配置**
-   - 支持邀请决策模式切换
-   - 支持队列补充降噪
-   - 支持上下文裁剪
-   - 支持会话隔离级别配置
+4. **高效的上下文控制**
+   - 上下文裁剪 + 记忆注入 + 动态社交张力注入组合，兼顾 token 成本与行为一致性。
 
-5. **高效的资源利用**
-   - 事件前置过滤减少 LLM 唤醒
-   - 上下文裁剪控制 token 消耗
-   - 队列补充降噪避免频繁唤醒
+5. **健壮的异步容错**
+   - WS 重连、命令 ACK Future、HTTP best-effort 写回、超时熔断与降级路径完整。
 
 ### 9.2 关键技术点
 
 1. **装饰器注册机制**
-   - `@register_platform_adapter` 注册平台适配器
-   - `@register_on_llm_request` 注册 LLM 请求钩子
-   - `@filter.llm_tool` 注册 LLM 工具
+   - `@register_platform_adapter`、`@register_on_llm_request`、`@filter.llm_tool`。
 
-2. **异步编程**
-   - 使用 asyncio 处理 WebSocket 连接
-   - 使用 Future 实现命令响应等待
-   - 使用 Queue 进行事件投递
+2. **异步编程与任务编排**
+   - `asyncio` + `Future` + `create_task` 支撑实时命令与后台反思双通路。
 
-3. **协议建模**
-   - 使用 TypedDict 定义灵活的字典类型
-   - 使用 dataclass 定义不可变的数据类
-   - 使用 Literal 类型约束字符串字面量
+3. **状态管理**
+   - 会话状态（`_active_conversation_id`）、会话对方（`_conversation_partner_id`）、反思累计阈值（`_importance_accumulator/_reflection_threshold`）。
 
-4. **状态管理**
-   - 维护活跃对话 ID 进行消息过滤
-   - 维护会话事件计数器进行监控
-   - 维护最后唤醒时间进行降噪
+4. **网关 API 协同**
+   - 读：`/api/bot/memory/search`、`/api/bot/social/state`、`/api/bot/memory/recent`
+   - 写：`/api/bot/memory/inject`、`/api/bot/social/affinity`、`/api/bot/description/update`
 
 ### 9.3 扩展性
 
 1. **新增 LLM 工具**
-   - 在 [`main.py`](astrbot_plugin_astrtown/main.py) 中添加 `@filter.llm_tool` 装饰器的方法
-   - 通过 `event.adapter.send_command()` 发送命令
+   - 在 [`main.py`](astrbot_plugin_astrtown/main.py:20) 增加 `@filter.llm_tool` 方法，并通过 [`send_command()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:184) 下发。
 
 2. **新增事件类型**
-   - 在 [`protocol.py`](astrbot_plugin_astrtown/adapter/protocol.py) 中定义载荷类型
-   - 在 [`_handle_world_event()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:494) 中添加处理逻辑
-   - 在 [`_format_event_to_text()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:790) 中添加文本格式化
+   - 在 [`protocol.py`](astrbot_plugin_astrtown/adapter/protocol.py:1) 扩展模型；在 [`_handle_world_event()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:529) 与 [`_format_event_to_text()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1662) 增加处理。
 
-3. **新增配置项**
-   - 在 [`_conf_schema.json`](astrbot_plugin_astrtown/_conf_schema.json) 中定义元数据
-   - 在 [`main.py`](astrbot_plugin_astrtown/main.py) 中读取和使用
+3. **新增反思策略**
+   - 可在 [`_build_reflection_prompt()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1111) 与 [`_normalize_reflection_response()`](astrbot_plugin_astrtown/adapter/astrtown_adapter.py:1159) 增量扩展，不影响 WS 主链路。
 
 ---
 
@@ -2316,9 +2272,9 @@ ws://gateway_host:port/ws/bot?token={token}&v={version_range}&subscribe={subscri
 
 | 目录 | 文件数 | 总行数 | 总字符数 |
 |------|--------|--------|----------|
-| 根目录 | 5 | 467 | 15006 |
-| adapter/ | 5 | 1013 | 37020 |
-| **总计** | **10** | **1480** | **52026** |
+| 根目录 | 5 | 687 | 25183 |
+| adapter/ | 5 | 1906 | 72884 |
+| **总计** | **10** | **2593** | **98067** |
 
 ### 10.2 依赖关系图
 

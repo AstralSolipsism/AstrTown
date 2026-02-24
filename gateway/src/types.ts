@@ -127,6 +127,29 @@ export type AgentQueueRefillRequestedEvent = WsWorldEventBase<
   AgentQueueRefillRequestedPayload
 >;
 
+export type SocialRelationshipProposedPayload = {
+  proposerId: string;
+  targetPlayerId: string;
+  status: string;
+};
+
+export type SocialRelationshipProposedEvent = WsWorldEventBase<
+  'social.relationship_proposed',
+  SocialRelationshipProposedPayload
+>;
+
+export type SocialRelationshipRespondedPayload = {
+  proposerId: string;
+  responderId: string;
+  status: string;
+  accept: boolean;
+};
+
+export type SocialRelationshipRespondedEvent = WsWorldEventBase<
+  'social.relationship_responded',
+  SocialRelationshipRespondedPayload
+>;
+
 export type WorldEvent =
   | AgentStateChangedEvent
   | ConversationStartedEvent
@@ -134,7 +157,9 @@ export type WorldEvent =
   | ConversationMessageEvent
   | ConversationTimeoutEvent
   | ActionFinishedEvent
-  | AgentQueueRefillRequestedEvent;
+  | AgentQueueRefillRequestedEvent
+  | SocialRelationshipProposedEvent
+  | SocialRelationshipRespondedEvent;
 
 export type MoveToCommand = WsMessageBase<'command.move_to', { targetPlayerId: string }>;
 
@@ -193,6 +218,16 @@ export type DoSomethingCommand = WsMessageBase<
   { actionType: string; args?: unknown; metadata?: Record<string, unknown> }
 >;
 
+export type ProposeRelationshipCommand = WsMessageBase<
+  'command.propose_relationship',
+  { targetPlayerId: string; status: string; metadata?: Record<string, unknown> }
+>;
+
+export type RespondRelationshipCommand = WsMessageBase<
+  'command.respond_relationship',
+  { proposerId: string; accept: boolean; metadata?: Record<string, unknown> }
+>;
+
 export type CommandAck = {
   type: 'command.ack';
   id: string;
@@ -227,6 +262,8 @@ export type WsOutboundMessage =
   | ConversationTimeoutEvent
   | ActionFinishedEvent
   | AgentQueueRefillRequestedEvent
+  | SocialRelationshipProposedEvent
+  | SocialRelationshipRespondedEvent
   | CommandAck
   | PingMessage;
 
@@ -242,7 +279,9 @@ export type CommandBatchItem = {
     | 'start_conversation'
     | 'leave_conversation'
     | 'continue_doing'
-    | 'do_something'}`;
+    | 'do_something'
+    | 'propose_relationship'
+    | 'respond_relationship'}`;
   payload: Record<string, unknown>;
 };
 
@@ -259,6 +298,8 @@ export type WsInboundMessage =
   | LeaveConversationCommand
   | ContinueDoingCommand
   | DoSomethingCommand
+  | ProposeRelationshipCommand
+  | RespondRelationshipCommand
   | CommandBatchMessage
   | EventAck
   | PongMessage;

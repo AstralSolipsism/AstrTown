@@ -71,4 +71,20 @@ export const aiTownTables = {
     .index('edge', ['worldId', 'player1', 'player2', 'ended'])
     .index('conversation', ['worldId', 'player1', 'conversationId'])
     .index('playerHistory', ['worldId', 'player1', 'ended']),
+
+  affinities: defineTable({
+    worldId: v.string(),
+    ownerId: v.string(),
+    targetId: v.string(),
+    score: v.number(),
+    label: v.string(),
+  }).index('by_owner_target', ['worldId', 'ownerId', 'targetId']),
+
+  relationships: defineTable({
+    worldId: v.string(),
+    player1Id: v.string(),
+    player2Id: v.string(),
+    status: v.string(),
+    establishedAt: v.number(),
+  }).index('by_players', ['worldId', 'player1Id', 'player2Id']),
 };

@@ -1,18 +1,43 @@
 import type { AstrTownClient } from './astrtownClient.js';
 import { createUuid } from './uuid.js';
 import { commandsTotal, commandLatencyMs } from './metrics.js';
-import type { BotConnection } from './connectionManager.js';
+import type { BotConnection, ConnectionManager } from './connectionManager.js';
 import type { CommandMapper, CommandType } from './commandMapper.js';
 import type { CommandQueue } from './commandQueue.js';
-import type { WsInboundMessage } from './types.js';
+import type { BotQueueRegistry } from './queueRegistry.js';
+import type { EventDispatcher } from './eventDispatcher.js';
+import { classifyPriority, enqueueWorldEvent } from './queueRegistry.js';
+import type {
+  SocialRelationshipProposedEvent,
+  SocialRelationshipRespondedEvent,
+  WorldEvent,
+  WsInboundMessage,
+  WsWorldEventBase,
+} from './types.js';
 
 export type CommandRouterDeps = {
   client: AstrTownClient;
   mapper: CommandMapper;
   queue: CommandQueue;
+  connections: ConnectionManager;
+  worldEventQueues: BotQueueRegistry<WorldEvent>;
+  worldEventDispatcher: EventDispatcher<WorldEvent>;
   send: (conn: BotConnection, msg: unknown) => void;
   log: { info: (o: any, m?: string) => void; warn: (o: any, m?: string) => void; error: (o: any, m?: string) => void };
 };
+
+function isWsWorldEventBase(value: unknown): value is WsWorldEventBase<string, any> {
+  if (!value || typeof value !== 'object') return false;
+  const obj = value as Record<string, unknown>;
+  return (
+    typeof obj.id === 'string' &&
+    typeof obj.type === 'string' &&
+    typeof obj.timestamp === 'number' &&
+    typeof obj.version === 'number' &&
+    typeof obj.expiresAt === 'number' &&
+    'payload' in obj
+  );
+}
 
 export class CommandRouter {
   constructor(private readonly deps: CommandRouterDeps) {}
@@ -74,6 +99,46 @@ export class CommandRouter {
     }
   }
 
+  private pushRelationshipProposedEvent(
+    targetAgentId: string,
+    event: SocialRelationshipProposedEvent,
+    hintedPriority?: 0 | 1 | 2 | 3,
+  ): void {
+    if (!isWsWorldEventBase(event)) {
+      throw new Error('Invalid relationship_proposed event');
+    }
+
+    const priority = classifyPriority(event, hintedPriority);
+    enqueueWorldEvent({
+      agentId: targetAgentId,
+      event,
+      priority,
+      registry: this.deps.worldEventQueues,
+      dispatcher: this.deps.worldEventDispatcher,
+      log: this.deps.log,
+    });
+  }
+
+  private pushRelationshipRespondedEvent(
+    targetAgentId: string,
+    event: SocialRelationshipRespondedEvent,
+    hintedPriority?: 0 | 1 | 2 | 3,
+  ): void {
+    if (!isWsWorldEventBase(event)) {
+      throw new Error('Invalid relationship_responded event');
+    }
+
+    const priority = classifyPriority(event, hintedPriority);
+    enqueueWorldEvent({
+      agentId: targetAgentId,
+      event,
+      priority,
+      registry: this.deps.worldEventQueues,
+      dispatcher: this.deps.worldEventDispatcher,
+      log: this.deps.log,
+    });
+  }
+
   async handle(conn: BotConnection, msg: WsInboundMessage): Promise<void> {
     if (msg.type === 'command.batch') {
       let batchItems: ReturnType<CommandRouter['toBatchItems']>;
@@ -93,27 +158,143 @@ export class CommandRouter {
         commandType: 'batch',
         execute: async () => {
           const end = commandLatencyMs.startTimer({ type: 'batch' });
+          const acceptedCommandIds = new Set<string>();
           try {
-            const events = this.deps.mapper.mapBatchToExternalEvents(
-              batchItems.map((item) => ({
-                commandType: item.commandType,
-                payload: { agentId: conn.session.agentId, ...item.payload },
-              })),
-            );
+            const passthroughItems: typeof batchItems = [];
 
-            const idempotencyKey = `${conn.session.agentId}:batch:${msg.id}`;
-            await this.deps.client.postCommandBatch({
-              token: conn.session.token,
-              idempotencyKey,
-              worldId: conn.session.worldId,
-              agentId: conn.session.agentId,
-              events,
-            });
+            for (const item of batchItems) {
+              if (item.commandType === 'propose_relationship') {
+                const targetPlayerId = String(item.payload?.targetPlayerId ?? '');
+                const status = String(item.payload?.status ?? '');
+                if (!targetPlayerId) {
+                  throw new Error('propose_relationship missing targetPlayerId');
+                }
+                if (!status) {
+                  throw new Error('propose_relationship missing status');
+                }
+
+                const targetConn = this.deps.connections.getByPlayerId(targetPlayerId);
+                if (!targetConn) {
+                  commandsTotal.inc({ type: item.commandType, status: 'rejected' });
+                  this.safeAckSend(
+                    conn,
+                    { commandId: item.commandId, status: 'rejected', reason: 'target_offline' },
+                    item.commandType,
+                  );
+                  acceptedCommandIds.add(item.commandId);
+                  continue;
+                }
+
+                const now = Date.now();
+                const event: SocialRelationshipProposedEvent = {
+                  type: 'social.relationship_proposed',
+                  id: createUuid(),
+                  version: conn.session.negotiatedVersion,
+                  timestamp: now,
+                  expiresAt: now + 60_000,
+                  payload: {
+                    proposerId: conn.session.playerId,
+                    targetPlayerId,
+                    status,
+                  },
+                };
+
+                this.pushRelationshipProposedEvent(targetConn.session.agentId, event, 1);
+                commandsTotal.inc({ type: item.commandType, status: 'accepted' });
+                this.safeAckSend(conn, { commandId: item.commandId, status: 'accepted' }, item.commandType);
+                acceptedCommandIds.add(item.commandId);
+                continue;
+              }
+
+              if (item.commandType === 'respond_relationship') {
+                const proposerId = String(item.payload?.proposerId ?? '');
+                const accept = Boolean(item.payload?.accept);
+                const status = String(item.payload?.status ?? (accept ? 'friends' : 'rejected'));
+                if (!proposerId) {
+                  throw new Error('respond_relationship missing proposerId');
+                }
+
+                if (accept) {
+                  const establishedAt = Number(item.payload?.establishedAt ?? Date.now());
+                  if (!Number.isFinite(establishedAt)) {
+                    throw new Error('respond_relationship establishedAt must be finite number');
+                  }
+
+                  const upsertRes = await this.deps.client.upsertRelationship(conn.session.token, {
+                    playerAId: proposerId,
+                    playerBId: conn.session.playerId,
+                    status,
+                    establishedAt,
+                  });
+
+                  if (!upsertRes.ok) {
+                    throw new Error(upsertRes.error ?? 'upsert relationship failed');
+                  }
+                }
+
+                const proposerConn = this.deps.connections.getByPlayerId(proposerId);
+                if (proposerConn) {
+                  const now = Date.now();
+                  const respondedEvent: SocialRelationshipRespondedEvent = {
+                    type: 'social.relationship_responded',
+                    id: createUuid(),
+                    version: proposerConn.session.negotiatedVersion,
+                    timestamp: now,
+                    expiresAt: now + 60_000,
+                    payload: {
+                      proposerId,
+                      responderId: conn.session.playerId,
+                      status,
+                      accept,
+                    },
+                  };
+                  this.pushRelationshipRespondedEvent(proposerConn.session.agentId, respondedEvent, 1);
+                } else {
+                  this.deps.log.info(
+                    {
+                      proposerId,
+                      responderId: conn.session.playerId,
+                      status,
+                      accept,
+                    },
+                    'relationship responder acknowledged but proposer is offline',
+                  );
+                }
+
+                commandsTotal.inc({ type: item.commandType, status: 'accepted' });
+                this.safeAckSend(conn, { commandId: item.commandId, status: 'accepted' }, item.commandType);
+                acceptedCommandIds.add(item.commandId);
+                continue;
+              }
+
+              passthroughItems.push(item);
+            }
+
+            if (passthroughItems.length > 0) {
+              const events = this.deps.mapper.mapBatchToExternalEvents(
+                passthroughItems.map((item) => ({
+                  commandType: item.commandType,
+                  payload: { agentId: conn.session.agentId, ...item.payload },
+                })),
+              );
+
+              const idempotencyKey = `${conn.session.agentId}:batch:${msg.id}`;
+              await this.deps.client.postCommandBatch({
+                token: conn.session.token,
+                idempotencyKey,
+                worldId: conn.session.worldId,
+                agentId: conn.session.agentId,
+                events,
+              });
+
+              for (const item of passthroughItems) {
+                commandsTotal.inc({ type: item.commandType, status: 'accepted' });
+                this.safeAckSend(conn, { commandId: item.commandId, status: 'accepted' }, item.commandType);
+                acceptedCommandIds.add(item.commandId);
+              }
+            }
 
             commandsTotal.inc({ type: 'batch', status: 'accepted' });
-            for (const item of batchItems) {
-              this.safeAckSend(conn, { commandId: item.commandId, status: 'accepted' }, item.commandType);
-            }
             this.safeAckSend(conn, { commandId: msg.id, status: 'accepted' }, 'command.batch');
             return { accepted: true };
           } catch (e: any) {
@@ -121,6 +302,9 @@ export class CommandRouter {
             commandsTotal.inc({ type: 'batch', status: 'rejected' });
             this.deps.log.error({ err: reason }, 'batch command handle failed');
             for (const item of batchItems) {
+              if (acceptedCommandIds.has(item.commandId)) {
+                continue;
+              }
               this.safeAckSend(conn, { commandId: item.commandId, status: 'rejected', reason }, item.commandType);
             }
             this.safeAckSend(conn, { commandId: msg.id, status: 'rejected', reason }, 'command.batch');
@@ -149,6 +333,120 @@ export class CommandRouter {
       execute: async () => {
         const end = commandLatencyMs.startTimer({ type: commandType });
         try {
+          if (commandType === 'propose_relationship') {
+            const targetPlayerId = String((msg.payload as any)?.targetPlayerId ?? '');
+            const status = String((msg.payload as any)?.status ?? '');
+            if (!targetPlayerId) {
+              commandsTotal.inc({ type: commandType, status: 'rejected' });
+              this.safeAckSend(conn, { commandId: msg.id, status: 'rejected', reason: 'Missing targetPlayerId' }, commandType);
+              return { accepted: false };
+            }
+            if (!status) {
+              commandsTotal.inc({ type: commandType, status: 'rejected' });
+              this.safeAckSend(conn, { commandId: msg.id, status: 'rejected', reason: 'Missing status' }, commandType);
+              return { accepted: false };
+            }
+
+            const targetConn = this.deps.connections.getByPlayerId(targetPlayerId);
+            if (!targetConn) {
+              commandsTotal.inc({ type: commandType, status: 'rejected' });
+              this.safeAckSend(conn, { commandId: msg.id, status: 'rejected', reason: 'target_offline' }, commandType);
+              return { accepted: false };
+            }
+
+            const now = Date.now();
+            const event: SocialRelationshipProposedEvent = {
+              type: 'social.relationship_proposed',
+              id: createUuid(),
+              version: conn.session.negotiatedVersion,
+              timestamp: now,
+              expiresAt: now + 60_000,
+              payload: {
+                proposerId: conn.session.playerId,
+                targetPlayerId,
+                status,
+              },
+            };
+
+            this.pushRelationshipProposedEvent(targetConn.session.agentId, event, 1);
+            commandsTotal.inc({ type: commandType, status: 'accepted' });
+            this.safeAckSend(conn, { commandId: msg.id, status: 'accepted' }, commandType);
+            return { accepted: true };
+          }
+
+          if (commandType === 'respond_relationship') {
+            const proposerId = String((msg.payload as any)?.proposerId ?? '');
+            const accept = Boolean((msg.payload as any)?.accept);
+            const status = String((msg.payload as any)?.status ?? (accept ? 'friends' : 'rejected'));
+            if (!proposerId) {
+              commandsTotal.inc({ type: commandType, status: 'rejected' });
+              this.safeAckSend(conn, { commandId: msg.id, status: 'rejected', reason: 'Missing proposerId' }, commandType);
+              return { accepted: false };
+            }
+
+            if (accept) {
+              const establishedAt = Number((msg.payload as any)?.establishedAt ?? Date.now());
+              if (!Number.isFinite(establishedAt)) {
+                commandsTotal.inc({ type: commandType, status: 'rejected' });
+                this.safeAckSend(
+                  conn,
+                  { commandId: msg.id, status: 'rejected', reason: 'establishedAt must be finite number' },
+                  commandType,
+                );
+                return { accepted: false };
+              }
+
+              const upsertRes = await this.deps.client.upsertRelationship(conn.session.token, {
+                playerAId: proposerId,
+                playerBId: conn.session.playerId,
+                status,
+                establishedAt,
+              });
+              if (!upsertRes.ok) {
+                commandsTotal.inc({ type: commandType, status: 'rejected' });
+                this.safeAckSend(
+                  conn,
+                  { commandId: msg.id, status: 'rejected', reason: upsertRes.error ?? 'Relationship upsert failed' },
+                  commandType,
+                );
+                return { accepted: false };
+              }
+            }
+
+            const proposerConn = this.deps.connections.getByPlayerId(proposerId);
+            if (proposerConn) {
+              const now = Date.now();
+              const respondedEvent: SocialRelationshipRespondedEvent = {
+                type: 'social.relationship_responded',
+                id: createUuid(),
+                version: proposerConn.session.negotiatedVersion,
+                timestamp: now,
+                expiresAt: now + 60_000,
+                payload: {
+                  proposerId,
+                  responderId: conn.session.playerId,
+                  status,
+                  accept,
+                },
+              };
+              this.pushRelationshipRespondedEvent(proposerConn.session.agentId, respondedEvent, 1);
+            } else {
+              this.deps.log.info(
+                {
+                  proposerId,
+                  responderId: conn.session.playerId,
+                  status,
+                  accept,
+                },
+                'relationship responder acknowledged but proposer is offline',
+              );
+            }
+
+            commandsTotal.inc({ type: commandType, status: 'accepted' });
+            this.safeAckSend(conn, { commandId: msg.id, status: 'accepted' }, commandType);
+            return { accepted: true };
+          }
+
           const req = mapping.buildRequest({ agentId: conn.session.agentId, ...(msg.payload as any) });
           const idempotencyKey = `${conn.session.agentId}:${commandType}:${Date.now()}:${createUuid().slice(0, 4)}`;
 

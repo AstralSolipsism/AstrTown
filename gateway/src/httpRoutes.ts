@@ -190,4 +190,112 @@ export function registerBotHttpProxyRoutes(
       return { ok: false, error: 'Gateway error' };
     }
   });
+
+  app.post('/api/bot/social/affinity', async (req, reply) => {
+    const auth = req.headers.authorization;
+    if (typeof auth !== 'string' || auth.length === 0) {
+      reply.code(401);
+      return { ok: false, error: 'Missing Authorization header' };
+    }
+
+    try {
+      const res = await fetch(`${(deps.astr as any).baseUrl ?? ''}/api/bot/social/affinity`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: auth,
+        },
+        body: JSON.stringify(req.body ?? {}),
+      });
+      const data = (await res.json().catch(() => ({}))) as any;
+      reply.code(res.status);
+      return data;
+    } catch (e: any) {
+      deps.log.error({ err: String(e?.message ?? e) }, 'socialAffinity proxy failed');
+      reply.code(500);
+      return { ok: false, error: 'Gateway error' };
+    }
+  });
+
+  app.get('/api/bot/memory/recent', async (req, reply) => {
+    const auth = req.headers.authorization;
+    if (typeof auth !== 'string' || auth.length === 0) {
+      reply.code(401);
+      return { ok: false, error: 'Missing Authorization header' };
+    }
+
+    const rawUrl = req.raw.url ?? '';
+    const queryIndex = rawUrl.indexOf('?');
+    const query = queryIndex >= 0 ? rawUrl.slice(queryIndex) : '';
+
+    try {
+      const res = await fetch(`${(deps.astr as any).baseUrl ?? ''}/api/bot/memory/recent${query}`, {
+        method: 'GET',
+        headers: {
+          authorization: auth,
+        },
+      });
+      const data = (await res.json().catch(() => ({}))) as any;
+      reply.code(res.status);
+      return data;
+    } catch (e: any) {
+      deps.log.error({ err: String(e?.message ?? e) }, 'memoryRecent proxy failed');
+      reply.code(500);
+      return { ok: false, error: 'Gateway error' };
+    }
+  });
+
+  app.get('/api/bot/social/state', async (req, reply) => {
+    const auth = req.headers.authorization;
+    if (typeof auth !== 'string' || auth.length === 0) {
+      reply.code(401);
+      return { ok: false, error: 'Missing Authorization header' };
+    }
+
+    const rawUrl = req.raw.url ?? '';
+    const queryIndex = rawUrl.indexOf('?');
+    const query = queryIndex >= 0 ? rawUrl.slice(queryIndex) : '';
+
+    try {
+      const res = await fetch(`${(deps.astr as any).baseUrl ?? ''}/api/bot/social/state${query}`, {
+        method: 'GET',
+        headers: {
+          authorization: auth,
+        },
+      });
+      const data = (await res.json().catch(() => ({}))) as any;
+      reply.code(res.status);
+      return data;
+    } catch (e: any) {
+      deps.log.error({ err: String(e?.message ?? e) }, 'socialState proxy failed');
+      reply.code(500);
+      return { ok: false, error: 'Gateway error' };
+    }
+  });
+
+  app.post('/api/bot/memory/inject', async (req, reply) => {
+    const auth = req.headers.authorization;
+    if (typeof auth !== 'string' || auth.length === 0) {
+      reply.code(401);
+      return { ok: false, error: 'Missing Authorization header' };
+    }
+
+    try {
+      const res = await fetch(`${(deps.astr as any).baseUrl ?? ''}/api/bot/memory/inject`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: auth,
+        },
+        body: JSON.stringify(req.body ?? {}),
+      });
+      const data = (await res.json().catch(() => ({}))) as any;
+      reply.code(res.status);
+      return data;
+    } catch (e: any) {
+      deps.log.error({ err: String(e?.message ?? e) }, 'memoryInject proxy failed');
+      reply.code(500);
+      return { ok: false, error: 'Gateway error' };
+    }
+  });
 }

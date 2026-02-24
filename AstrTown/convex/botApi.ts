@@ -977,7 +977,7 @@ export const postMemorySearch = httpAction(async (ctx: ActionCtx, request: Reque
 
     return jsonResponse({
       ok: true,
-      memories: memories.map((m) => ({
+      memories: memories.map((m: any) => ({
         description: m.description,
         importance: m.importance,
       })),
@@ -985,4 +985,234 @@ export const postMemorySearch = httpAction(async (ctx: ActionCtx, request: Reque
   } catch (error: any) {
     return jsonResponse({ ok: false, error: String(error?.message ?? error) }, { status: 500 });
   }
+});
+
+export const getRecentMemories = httpAction(async (ctx: ActionCtx, request: Request) => {
+  const token = parseBearerToken(request);
+  if (!token) return unauthorized('AUTH_FAILED', 'Missing bearer token');
+
+  const verified = await verifyBotToken(ctx, token);
+  if (!verified.valid) return unauthorized(verified.code, verified.message);
+
+  const url = new URL(request.url);
+  const worldId = url.searchParams.get('worldId');
+  const playerId = url.searchParams.get('playerId');
+  const countRaw = url.searchParams.get('count');
+
+  if (!worldId) {
+    return badRequest('INVALID_ARGS', 'Missing worldId');
+  }
+  if (!playerId) {
+    return badRequest('INVALID_ARGS', 'Missing playerId');
+  }
+  if (!countRaw) {
+    return badRequest('INVALID_ARGS', 'Missing count');
+  }
+
+  const count = Number(countRaw);
+  if (!Number.isInteger(count) || count <= 0) {
+    return badRequest('INVALID_ARGS', 'count must be a positive integer');
+  }
+  if (worldId !== String(verified.binding.worldId)) {
+    return unauthorized('AUTH_FAILED', 'worldId mismatch');
+  }
+  if (playerId !== verified.binding.playerId) {
+    return unauthorized('AUTH_FAILED', 'playerId mismatch');
+  }
+
+  try {
+    const memories = await ctx.runQuery((api as any).agent.memory.getRecentMemories as any, {
+      worldId,
+      playerId,
+      count,
+    });
+    return jsonResponse({ ok: true, memories });
+  } catch (e: any) {
+    const message = String(e?.message ?? e);
+    return badRequest('INVALID_ARGS', message);
+  }
+});
+
+export const postSocialAffinity = httpAction(async (ctx: ActionCtx, request: Request) => {
+  const token = parseBearerToken(request);
+  if (!token) return unauthorized('AUTH_FAILED', 'Missing bearer token');
+
+  const verified = await verifyBotToken(ctx, token);
+  if (!verified.valid) return unauthorized(verified.code, verified.message);
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch (e: any) {
+    const message = String(e?.message ?? 'Request body is not valid JSON');
+    return badRequest('INVALID_JSON', message);
+  }
+
+  const ownerId = body?.ownerId;
+  const targetId = body?.targetId;
+  const scoreDelta = body?.scoreDelta;
+  const label = body?.label;
+
+  if (!ownerId || typeof ownerId !== 'string') {
+    return badRequest('INVALID_ARGS', 'Missing ownerId');
+  }
+  if (!targetId || typeof targetId !== 'string') {
+    return badRequest('INVALID_ARGS', 'Missing targetId');
+  }
+  if (typeof scoreDelta !== 'number' || !Number.isFinite(scoreDelta)) {
+    return badRequest('INVALID_ARGS', 'scoreDelta must be a number');
+  }
+  if (!label || typeof label !== 'string') {
+    return badRequest('INVALID_ARGS', 'Missing label');
+  }
+
+  try {
+    await ctx.runMutation((internal as any).social.updateAffinity as any, {
+      worldId: String(verified.binding.worldId),
+      ownerId,
+      targetId,
+      scoreDelta,
+      label,
+    });
+  } catch (e: any) {
+    const message = String(e?.message ?? e);
+    return badRequest('INVALID_ARGS', message);
+  }
+
+  return jsonResponse({ ok: true });
+});
+
+export const postSocialRelationship = httpAction(async (ctx: ActionCtx, request: Request) => {
+  const token = parseBearerToken(request);
+  if (!token) return unauthorized('AUTH_FAILED', 'Missing bearer token');
+
+  const verified = await verifyBotToken(ctx, token);
+  if (!verified.valid) return unauthorized(verified.code, verified.message);
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch (e: any) {
+    const message = String(e?.message ?? 'Request body is not valid JSON');
+    return badRequest('INVALID_JSON', message);
+  }
+
+  const playerAId = body?.playerAId;
+  const playerBId = body?.playerBId;
+  const status = body?.status;
+  const establishedAt = body?.establishedAt;
+
+  if (!playerAId || typeof playerAId !== 'string') {
+    return badRequest('INVALID_ARGS', 'Missing playerAId');
+  }
+  if (!playerBId || typeof playerBId !== 'string') {
+    return badRequest('INVALID_ARGS', 'Missing playerBId');
+  }
+  if (!status || typeof status !== 'string') {
+    return badRequest('INVALID_ARGS', 'Missing status');
+  }
+  if (typeof establishedAt !== 'number' || !Number.isFinite(establishedAt)) {
+    return badRequest('INVALID_ARGS', 'establishedAt must be a finite number');
+  }
+
+  try {
+    const relationshipId = await ctx.runMutation((internal as any).social.upsertRelationship as any, {
+      worldId: String(verified.binding.worldId),
+      playerAId,
+      playerBId,
+      status,
+      establishedAt,
+    });
+
+    return jsonResponse({ ok: true, relationshipId: String(relationshipId) });
+  } catch (e: any) {
+    const message = String(e?.message ?? e);
+    return badRequest('INVALID_ARGS', message);
+  }
+});
+
+export const getSocialState = httpAction(async (ctx: ActionCtx, request: Request) => {
+  const token = parseBearerToken(request);
+  if (!token) return unauthorized('AUTH_FAILED', 'Missing bearer token');
+
+  const verified = await verifyBotToken(ctx, token);
+  if (!verified.valid) return unauthorized(verified.code, verified.message);
+
+  const url = new URL(request.url);
+  const ownerId = url.searchParams.get('ownerId');
+  const targetId = url.searchParams.get('targetId');
+
+  if (!ownerId) {
+    return badRequest('INVALID_ARGS', 'Missing ownerId');
+  }
+  if (!targetId) {
+    return badRequest('INVALID_ARGS', 'Missing targetId');
+  }
+
+  try {
+    const state = await ctx.runQuery((internal as any).social.getSocialState as any, {
+      worldId: String(verified.binding.worldId),
+      ownerId,
+      targetId,
+    });
+    return jsonResponse({ ok: true, ...state });
+  } catch (e: any) {
+    const message = String(e?.message ?? e);
+    return badRequest('INVALID_ARGS', message);
+  }
+});
+
+export const postMemoryInject = httpAction(async (ctx: ActionCtx, request: Request) => {
+  const token = parseBearerToken(request);
+  if (!token) return unauthorized('AUTH_FAILED', 'Missing bearer token');
+
+  const verified = await verifyBotToken(ctx, token);
+  if (!verified.valid) return unauthorized(verified.code, verified.message);
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch (e: any) {
+    const message = String(e?.message ?? 'Request body is not valid JSON');
+    return badRequest('INVALID_JSON', message);
+  }
+
+  const agentId = body?.agentId;
+  const playerId = body?.playerId;
+  const summary = body?.summary;
+  const importance = body?.importance;
+  const memoryType = body?.memoryType;
+
+  if (!agentId || typeof agentId !== 'string') {
+    return badRequest('INVALID_ARGS', 'Missing agentId');
+  }
+  if (!playerId || typeof playerId !== 'string') {
+    return badRequest('INVALID_ARGS', 'Missing playerId');
+  }
+  if (!summary || typeof summary !== 'string') {
+    return badRequest('INVALID_ARGS', 'Missing summary');
+  }
+  if (typeof importance !== 'number' || !Number.isFinite(importance)) {
+    return badRequest('INVALID_ARGS', 'importance must be a number');
+  }
+
+  if (memoryType !== undefined && typeof memoryType !== 'string') {
+    return badRequest('INVALID_ARGS', 'memoryType must be a string');
+  }
+
+  try {
+    await ctx.runAction((internal as any).agent.memory.insertExternalMemory as any, {
+      worldId: verified.binding.worldId,
+      agentId,
+      playerId,
+      summary,
+      importance,
+      memoryType,
+    });
+  } catch (e: any) {
+    const message = String(e?.message ?? e);
+    return badRequest('INVALID_ARGS', message);
+  }
+
+  return jsonResponse({ ok: true });
 });

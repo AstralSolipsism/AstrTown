@@ -4,7 +4,7 @@ import asyncio
 import json
 import random
 import time
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 
 from .protocol import (
@@ -46,6 +46,20 @@ def set_persona_data(description: str) -> None:
 def get_persona_data() -> str | None:
     return _PERSONA_DESCRIPTION
 
+
+ReflectLLMCallback = Callable[[str], Awaitable[Any]]
+_REFLECTION_LLM_CALLBACK: ReflectLLMCallback | None = None
+
+
+def set_reflection_llm_callback(callback: ReflectLLMCallback | None) -> None:
+    global _REFLECTION_LLM_CALLBACK
+    _REFLECTION_LLM_CALLBACK = callback
+
+
+def get_reflection_llm_callback() -> ReflectLLMCallback | None:
+    return _REFLECTION_LLM_CALLBACK
+
+
 try:
     from websockets.asyncio.client import connect
     from websockets.exceptions import ConnectionClosed
@@ -85,6 +99,9 @@ class AstrTownAdapter(Platform):
         # 方案C：本地维护“当前活跃对话ID”，用于过滤不属于自己的 conversation.message。
         # 仅作为插件层兜底，防止时序竞争导致 NPC 已离开但仍被投递消息而唤醒 LLM。
         self._active_conversation_id: str | None = None
+
+        # 3.4：维护当前会话对方 player_id，供插件侧张力 Prompt 注入使用。
+        self._conversation_partner_id: str | None = None
 
         self.gateway_url = str(
             platform_config.get("astrtown_gateway_url", "http://localhost:40010")
@@ -138,6 +155,10 @@ class AstrTownAdapter(Platform):
         # 方案B：事件ACK已发送 日志采样（避免高频刷屏）
         self._event_ack_last_log_ts: float = 0.0
         self._event_ack_sample_count: int = 0
+
+        # 高阶反思触发器：累计“日常反思”的 importance，总量达到阈值后触发一次深层反思。
+        self._importance_accumulator: float = 0.0
+        self._reflection_threshold: float = 300.0
 
     def meta(self) -> PlatformMetadata:
         return self._metadata
@@ -477,7 +498,12 @@ class AstrTownAdapter(Platform):
                 fut.set_result(ack.payload)
             return
 
-        if msg_type.startswith("agent.") or msg_type.startswith("conversation.") or msg_type.startswith("action."):
+        if (
+            msg_type.startswith("agent.")
+            or msg_type.startswith("conversation.")
+            or msg_type.startswith("action.")
+            or msg_type.startswith("social.")
+        ):
             await self._handle_world_event(data)
             return
 
@@ -541,25 +567,99 @@ class AstrTownAdapter(Platform):
                     logger.warning(f"[AstrTown] send event ack failed for eventId={event_id}: {e}")
                 return
 
+        if event_type == "conversation.message":
+            message_raw = payload.get("message")
+            message = message_raw if isinstance(message_raw, dict) else {}
+            speaker_id = str(message.get("speakerId") or "").strip()
+            owner_id = str(self._player_id or "").strip()
+            if speaker_id and speaker_id != owner_id:
+                self._conversation_partner_id = speaker_id
+
         # 方案C：活跃对话状态更新（invited/started/ended/timeout）
         if event_type == "conversation.ended":
             ended_cid = str(payload.get("conversationId") or "").strip()
             if ended_cid and self._active_conversation_id == ended_cid:
                 self._active_conversation_id = None
+                self._conversation_partner_id = None
             elif not ended_cid:
                 # 没有 conversationId 时保守清空，避免残留。
                 self._active_conversation_id = None
+                self._conversation_partner_id = None
+
+            other_player_id = self._pick_first_non_empty_str(
+                payload,
+                [
+                    "otherPlayerId",
+                    "other_player_id",
+                    "otherParticipantId",
+                    "targetPlayerId",
+                    "counterpartId",
+                ],
+            )
+            other_player_name = self._pick_first_non_empty_str(
+                payload,
+                [
+                    "otherPlayerName",
+                    "other_player_name",
+                    "otherParticipantName",
+                    "targetPlayerName",
+                    "counterpartName",
+                ],
+            )
+            if not other_player_name:
+                other_player_name = other_player_id or "对方"
+            messages = self._extract_conversation_messages(payload)
+
+            # 关键约束：反思任务必须异步后台执行，不能阻塞事件主流程。
+            asyncio.create_task(
+                self._async_reflect_on_conversation(
+                    conversation_id=ended_cid,
+                    other_player_name=other_player_name,
+                    other_player_id=other_player_id,
+                    messages=messages,
+                ),
+                name=f"astrtown_reflect_{ended_cid or event_id or 'unknown'}",
+            )
 
         if event_type == "conversation.started":
             started_cid = str(payload.get("conversationId") or "").strip()
             if started_cid:
                 self._active_conversation_id = started_cid
 
+            owner_id = str(self._player_id or "").strip()
+            partner_id = ""
+            other_ids = payload.get("otherParticipantIds")
+            if isinstance(other_ids, list):
+                for item in other_ids:
+                    candidate = str(item or "").strip()
+                    if candidate and candidate != owner_id:
+                        partner_id = candidate
+                        break
+
+            if not partner_id:
+                partner_id = self._pick_first_non_empty_str(
+                    payload,
+                    [
+                        "otherPlayerId",
+                        "other_player_id",
+                        "otherParticipantId",
+                        "targetPlayerId",
+                        "counterpartId",
+                    ],
+                )
+
+            if partner_id and partner_id != owner_id:
+                self._conversation_partner_id = partner_id
+
         if event_type == "conversation.timeout":
             # 1) 状态清理
             timeout_cid = str(payload.get("conversationId") or "").strip()
             if timeout_cid and self._active_conversation_id == timeout_cid:
                 self._active_conversation_id = None
+                self._conversation_partner_id = None
+            elif not timeout_cid:
+                self._active_conversation_id = None
+                self._conversation_partner_id = None
 
             # 2) 构造系统提示文本
             reason = str(payload.get("reason") or "").strip()
@@ -622,11 +722,143 @@ class AstrTownAdapter(Platform):
                 logger.warning(f"[AstrTown] send event ack failed for eventId={event_id}: {e}")
             return
 
+        if event_type == "social.relationship_proposed":
+            proposer_id = str(payload.get("proposerId") or "").strip()
+            proposer_name = str(payload.get("proposerName") or proposer_id or "未知玩家").strip() or "未知玩家"
+            status = str(payload.get("status") or "").strip() or "未知关系"
+            text = (
+                f"【系统提示】玩家 {proposer_name} 刚向你申请确立 {status} 关系。"
+                "请结合你的潜意识好感度和人设，决定是否调用 respond_relationship 工具接受，并回复对方。"
+            )
+
+            session_id = self._build_session_id(event_type, payload)
+
+            abm = AstrBotMessage()
+            abm.self_id = str(self._player_id or self.client_self_id)
+            abm.sender = MessageMember(
+                user_id="system",
+                nickname="AstrTown",
+            )
+            abm.type = MessageType.GROUP_MESSAGE
+            abm.session_id = session_id
+            abm.message_id = event_id or new_id("evt")
+            abm.message = [Plain(text=text)]
+            abm.message_str = text
+            abm.raw_message = data
+            abm.timestamp = int(time.time())
+
+            event = AstrTownMessageEvent(
+                message_str=text,
+                message_obj=abm,
+                platform_meta=self._metadata,
+                session_id=session_id,
+                adapter=self,
+                world_event=data,
+            )
+            event.set_extra("event_type", event_type)
+            event.set_extra("event_id", event_id)
+            if proposer_id:
+                event.set_extra("proposer_id", proposer_id)
+            event.set_extra("relationship_status", status)
+            event.set_extra("priority", "high")
+
+            # 高优先级系统事件：始终唤醒 LLM 决策。
+            event.is_wake = True
+            event.is_at_or_wake_command = True
+
+            try:
+                self.commit_event(event)
+            except Exception as e:
+                logger.error(
+                    f"[AstrTown] commit_event failed for eventId={event_id} type={event_type}: {e}",
+                    exc_info=True,
+                )
+                return
+
+            logger.info(
+                f"[AstrTown] 已接收世界事件: eventId={event_id}, eventType={event_type}, agentId={self._agent_id}"
+            )
+
+            try:
+                await self._send_event_ack(event_id)
+            except Exception as e:
+                logger.warning(f"[AstrTown] send event ack failed for eventId={event_id}: {e}")
+            return
+
+        if event_type == "social.relationship_responded":
+            responder_id = str(payload.get("responderId") or "").strip() or "未知玩家"
+            status = str(payload.get("status") or "").strip() or "未知关系"
+            accept_raw = payload.get("accept")
+            accepted = bool(accept_raw) if isinstance(accept_raw, bool) else False
+            decision_text = "接受" if accepted else "拒绝"
+            text = (
+                f"【系统提示】[{responder_id}] 已{decision_text}了你提出的 [{status}] 关系申请。"
+                "请根据这个结果做出反应。"
+            )
+
+            session_id = self._build_session_id(event_type, payload)
+
+            abm = AstrBotMessage()
+            abm.self_id = str(self._player_id or self.client_self_id)
+            abm.sender = MessageMember(
+                user_id="system",
+                nickname="AstrTown",
+            )
+            abm.type = MessageType.GROUP_MESSAGE
+            abm.session_id = session_id
+            abm.message_id = event_id or new_id("evt")
+            abm.message = [Plain(text=text)]
+            abm.message_str = text
+            abm.raw_message = data
+            abm.timestamp = int(time.time())
+
+            event = AstrTownMessageEvent(
+                message_str=text,
+                message_obj=abm,
+                platform_meta=self._metadata,
+                session_id=session_id,
+                adapter=self,
+                world_event=data,
+            )
+            event.set_extra("event_type", event_type)
+            event.set_extra("event_id", event_id)
+            event.set_extra("responder_id", responder_id)
+            event.set_extra("relationship_status", status)
+            event.set_extra("relationship_accept", accepted)
+            event.set_extra("priority", "high")
+
+            # 高优先级系统事件：始终唤醒 LLM 决策。
+            event.is_wake = True
+            event.is_at_or_wake_command = True
+
+            try:
+                self.commit_event(event)
+            except Exception as e:
+                logger.error(
+                    f"[AstrTown] commit_event failed for eventId={event_id} type={event_type}: {e}",
+                    exc_info=True,
+                )
+                return
+
+            logger.info(
+                f"[AstrTown] 已接收世界事件: eventId={event_id}, eventType={event_type}, agentId={self._agent_id}"
+            )
+
+            try:
+                await self._send_event_ack(event_id)
+            except Exception as e:
+                logger.warning(f"[AstrTown] send event ack failed for eventId={event_id}: {e}")
+            return
+
         # 修复1：邀请策略（在最开始读取配置）
         if event_type == "conversation.invited":
             invite_mode = str(self.config.get("astrtown_invite_decision_mode", "auto_accept") or "auto_accept").strip()
             conversation_id = str(payload.get("conversationId") or "").strip()
-            inviter_name = str(payload.get("inviterName") or payload.get("inviterId") or "").strip()
+            inviter_id = str(payload.get("inviterId") or "").strip()
+            inviter_name = str(payload.get("inviterName") or inviter_id or "").strip()
+            owner_id = str(self._player_id or "").strip()
+            if inviter_id and inviter_id != owner_id:
+                self._conversation_partner_id = inviter_id
 
             logger.info(
                 f"[AstrTown] 收到邀请事件: decision_mode={invite_mode}, conversationId={conversation_id}, inviter={inviter_name}"
@@ -834,6 +1066,465 @@ class AstrTownAdapter(Platform):
             # astrbot.logger 不一定支持 trace，这里用 debug 但采样输出，避免刷屏。
             logger.debug(f"[AstrTown] 事件ACK已发送(采样): lastEventId={event_id}, count={count}/10s")
 
+    def _pick_first_non_empty_str(self, payload: dict[str, Any], keys: list[str]) -> str:
+        for key in keys:
+            value = payload.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _extract_conversation_messages(self, payload: dict[str, Any]) -> list[dict[str, str]]:
+        raw_messages = payload.get("messages")
+        if not isinstance(raw_messages, list):
+            return []
+
+        messages: list[dict[str, str]] = []
+        for item in raw_messages:
+            if not isinstance(item, dict):
+                continue
+
+            message_raw = item.get("message")
+            message = message_raw if isinstance(message_raw, dict) else item
+
+            speaker_id = str(
+                message.get("speakerId")
+                or item.get("speakerId")
+                or message.get("authorId")
+                or message.get("author")
+                or "unknown"
+            ).strip()
+            content = str(message.get("content") or message.get("text") or "").strip()
+            if not content:
+                continue
+
+            messages.append(
+                {
+                    "speakerId": speaker_id or "unknown",
+                    "content": content,
+                }
+            )
+        return messages
+
+    def _build_reflection_prompt(
+        self,
+        conversation_id: str,
+        other_player_name: str,
+        other_player_id: str,
+        messages: list[dict[str, str]],
+    ) -> str:
+        role_name = str(self._player_name or "该角色").strip() or "该角色"
+        target_name = other_player_name.strip() or other_player_id.strip() or "对方"
+
+        transcript_lines: list[str] = []
+        for idx, msg in enumerate(messages, start=1):
+            speaker = str(msg.get("speakerId") or "unknown").strip() or "unknown"
+            content = str(msg.get("content") or "").strip()
+            if not content:
+                continue
+            transcript_lines.append(f"{idx}. {speaker}: {content}")
+        transcript = "\n".join(transcript_lines) if transcript_lines else "（无可用对话记录）"
+
+        return (
+            f"请作为 {role_name} 的潜意识反思刚刚结束的对话。\n"
+            "1. 提炼对话摘要 (summary) 和重要性 (importance 1-10)\n"
+            f"2. 评估对 {target_name} 的单向好感度变动 (-10到10) 以及最新的主观感受标签 "
+            "(affinity_label，如'觉得很吵','暗生情愫')\n"
+            "请严格输出 JSON：{\"summary\":\"...\",\"importance\":N,\"affinity_delta\":N,"
+            "\"affinity_label\":\"...\"}\n"
+            "只输出 JSON，不要输出任何额外文字。\n\n"
+            f"对话ID：{conversation_id or 'unknown'}\n"
+            f"对方ID：{other_player_id or 'unknown'}\n"
+            f"对方名字：{target_name}\n"
+            "对话记录：\n"
+            f"{transcript}"
+        )
+
+    @staticmethod
+    def _to_int_in_range(value: Any, minimum: int, maximum: int, default: int) -> int:
+        try:
+            if isinstance(value, bool):
+                raise ValueError("bool is not valid number")
+            num = int(float(value))
+        except Exception:
+            return default
+        if num < minimum:
+            return minimum
+        if num > maximum:
+            return maximum
+        return num
+
+    def _normalize_reflection_response(self, llm_result: Any) -> dict[str, Any] | None:
+        parsed: dict[str, Any] | None = None
+
+        if isinstance(llm_result, dict):
+            parsed = llm_result
+        elif hasattr(llm_result, "completion_text"):
+            llm_text = str(getattr(llm_result, "completion_text") or "").strip()
+            if llm_text:
+                try:
+                    obj = json.loads(llm_text)
+                except Exception:
+                    start = llm_text.find("{")
+                    end = llm_text.rfind("}")
+                    if start >= 0 and end > start:
+                        try:
+                            obj = json.loads(llm_text[start : end + 1])
+                        except Exception:
+                            obj = None
+                    else:
+                        obj = None
+                if isinstance(obj, dict):
+                    parsed = obj
+        elif isinstance(llm_result, str):
+            text = llm_result.strip()
+            if not text:
+                return None
+            try:
+                obj = json.loads(text)
+            except Exception:
+                start = text.find("{")
+                end = text.rfind("}")
+                if start < 0 or end <= start:
+                    return None
+                try:
+                    obj = json.loads(text[start : end + 1])
+                except Exception:
+                    return None
+            if isinstance(obj, dict):
+                parsed = obj
+
+        if not isinstance(parsed, dict):
+            return None
+
+        summary = str(parsed.get("summary") or "").strip()
+        if not summary:
+            summary = "一次对话结束后的潜意识反思。"
+
+        importance = self._to_int_in_range(parsed.get("importance"), 1, 10, 5)
+        affinity_delta = self._to_int_in_range(parsed.get("affinity_delta"), -10, 10, 0)
+        affinity_label = str(parsed.get("affinity_label") or "").strip() or "暂无明显变化"
+
+        return {
+            "summary": summary,
+            "importance": importance,
+            "affinity_delta": affinity_delta,
+            "affinity_label": affinity_label,
+        }
+
+    @staticmethod
+    def _parse_json_array(text: str) -> list[Any] | None:
+        raw = text.strip()
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            start = raw.find("[")
+            end = raw.rfind("]")
+            if start < 0 or end <= start:
+                return None
+            try:
+                parsed = json.loads(raw[start : end + 1])
+            except Exception:
+                return None
+
+        if isinstance(parsed, list):
+            return parsed
+        return None
+
+    def _normalize_higher_reflection_response(self, llm_result: Any) -> list[str]:
+        parsed: list[Any] | None = None
+
+        if isinstance(llm_result, list):
+            parsed = llm_result
+        elif isinstance(llm_result, dict):
+            insights = llm_result.get("insights")
+            if isinstance(insights, list):
+                parsed = insights
+            elif "insight" in llm_result:
+                parsed = [llm_result]
+        elif hasattr(llm_result, "completion_text"):
+            text = str(getattr(llm_result, "completion_text") or "").strip()
+            parsed = self._parse_json_array(text)
+        elif isinstance(llm_result, str):
+            parsed = self._parse_json_array(llm_result)
+
+        if not isinstance(parsed, list):
+            return []
+
+        normalized: list[str] = []
+        for item in parsed:
+            if isinstance(item, dict):
+                insight = str(item.get("insight") or "").strip()
+            elif isinstance(item, str):
+                insight = item.strip()
+            else:
+                insight = ""
+            if insight:
+                normalized.append(insight)
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for insight in normalized:
+            if insight in seen:
+                continue
+            seen.add(insight)
+            deduped.append(insight)
+            if len(deduped) >= 5:
+                break
+
+        return deduped
+
+    async def _post_json_best_effort(
+        self,
+        session: Any,
+        url: str,
+        headers: dict[str, str],
+        body: dict[str, Any],
+        action_name: str,
+    ) -> bool:
+        try:
+            async with session.post(url, json=body, headers=headers) as resp:
+                if 200 <= resp.status < 300:
+                    return True
+                text = ""
+                try:
+                    text = await resp.text()
+                except Exception:
+                    text = ""
+                logger.warning(f"[AstrTown] {action_name} 失败 http={resp.status}: {text[:200]}")
+                return False
+        except Exception as e:
+            logger.warning(f"[AstrTown] {action_name} 网络异常: {e}")
+            return False
+
+    async def _async_reflect_on_conversation(
+        self,
+        conversation_id: str,
+        other_player_name: str,
+        other_player_id: str,
+        messages: list[dict[str, str]],
+    ) -> None:
+        try:
+            if aiohttp is None:
+                logger.warning("[AstrTown] aiohttp not available; skip async reflection")
+                return
+
+            callback = get_reflection_llm_callback()
+            if callback is None:
+                logger.warning("[AstrTown] reflection llm callback not set; skip async reflection")
+                return
+
+            owner_id = str(self._player_id or "").strip()
+            agent_id = str(self._agent_id or "").strip()
+            if not owner_id or not agent_id:
+                logger.warning("[AstrTown] missing binding(agent/player); skip async reflection")
+                return
+
+            prompt = self._build_reflection_prompt(
+                conversation_id=conversation_id,
+                other_player_name=other_player_name,
+                other_player_id=other_player_id,
+                messages=messages,
+            )
+
+            llm_result = await callback(prompt)
+            normalized = self._normalize_reflection_response(llm_result)
+            if normalized is None:
+                logger.warning(
+                    f"[AstrTown] reflection llm 返回不可解析 JSON，conversationId={conversation_id}"
+                )
+                return
+
+            summary = str(normalized["summary"])
+            importance = self._to_int_in_range(normalized.get("importance"), 1, 10, 5)
+            affinity_delta = self._to_int_in_range(normalized.get("affinity_delta"), -10, 10, 0)
+            affinity_label = str(normalized.get("affinity_label") or "暂无明显变化").strip()
+
+            base = self._build_http_base_url()
+            if not base:
+                logger.warning("[AstrTown] invalid gateway base url; skip async reflection")
+                return
+
+            headers = {"Authorization": f"Bearer {self.token}"}
+            timeout = aiohttp.ClientTimeout(total=8.0)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                memory_body = {
+                    "agentId": agent_id,
+                    "playerId": owner_id,
+                    "summary": summary,
+                    "importance": importance,
+                    "memoryType": "conversation",
+                }
+                memory_ok = await self._post_json_best_effort(
+                    session=session,
+                    url=base + "/api/bot/memory/inject",
+                    headers=headers,
+                    body=memory_body,
+                    action_name="memory.inject",
+                )
+                if not memory_ok:
+                    logger.warning(
+                        f"[AstrTown] reflection memory.inject 失败，跳过累计 importance, conversationId={conversation_id}"
+                    )
+                    return
+
+                target_id = str(other_player_id or "").strip()
+                if not target_id:
+                    logger.warning(
+                        f"[AstrTown] reflection 缺少 other_player_id，跳过好感度回写和累计 importance, conversationId={conversation_id}"
+                    )
+                    return
+
+                affinity_body = {
+                    "ownerId": owner_id,
+                    "targetId": target_id,
+                    "scoreDelta": affinity_delta,
+                    "label": affinity_label,
+                }
+                affinity_ok = await self._post_json_best_effort(
+                    session=session,
+                    url=base + "/api/bot/social/affinity",
+                    headers=headers,
+                    body=affinity_body,
+                    action_name="social.affinity",
+                )
+                if not affinity_ok:
+                    logger.warning(
+                        f"[AstrTown] reflection social.affinity 失败，跳过累计 importance, conversationId={conversation_id}"
+                    )
+                    return
+
+            logger.info(
+                f"[AstrTown] conversation reflection completed: conversationId={conversation_id}, delta={affinity_delta}"
+            )
+
+            self._importance_accumulator += float(importance)
+            if self._importance_accumulator >= self._reflection_threshold:
+                asyncio.create_task(
+                    self._async_higher_reflection(),
+                    name=f"astrtown_higher_reflect_{owner_id or 'unknown'}",
+                )
+                self._importance_accumulator = 0.0
+        except Exception as e:
+            logger.warning(
+                f"[AstrTown] async reflection task failed: conversationId={conversation_id}, error={e}"
+            )
+
+    async def _async_higher_reflection(self) -> None:
+        try:
+            if aiohttp is None:
+                logger.warning("[AstrTown] aiohttp not available; skip higher reflection")
+                return
+
+            callback = get_reflection_llm_callback()
+            if callback is None:
+                logger.warning("[AstrTown] reflection llm callback not set; skip higher reflection")
+                return
+
+            owner_id = str(self._player_id or "").strip()
+            agent_id = str(self._agent_id or "").strip()
+            if not owner_id or not agent_id:
+                logger.warning("[AstrTown] missing binding(agent/player); skip higher reflection")
+                return
+
+            role_name = str(self._player_name or "").strip() or owner_id or "该角色"
+            world_id = str(self._world_id or "").strip()
+            if not world_id:
+                logger.warning("[AstrTown] missing binding(world); skip higher reflection")
+                return
+
+            base = self._build_http_base_url()
+            if not base:
+                logger.warning("[AstrTown] invalid gateway base url; skip higher reflection")
+                return
+
+            headers = {"Authorization": f"Bearer {self.token}"}
+            timeout = aiohttp.ClientTimeout(total=8.0)
+            recent_url = base + "/api/bot/memory/recent?" + urlencode(
+                {"worldId": world_id, "playerId": owner_id, "count": 50}
+            )
+            recent_memories: Any = None
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                try:
+                    async with session.get(recent_url, headers=headers) as resp:
+                        if resp.status < 200 or resp.status >= 300:
+                            text = ""
+                            try:
+                                text = await resp.text()
+                            except Exception:
+                                text = ""
+                            logger.warning(
+                                f"[AstrTown] 获取近期记忆失败 http={resp.status}, worldId={world_id}, playerId={owner_id}, body={text[:200]}"
+                            )
+                            return
+                        recent_memories = await resp.json()
+                except Exception as e:
+                    logger.warning(f"[AstrTown] 获取近期记忆网络异常: {e}")
+                    return
+
+            if not isinstance(recent_memories, list):
+                logger.warning("[AstrTown] higher reflection skipped: recent memories payload invalid")
+                return
+
+            memory_lines: list[str] = []
+            for idx, memory in enumerate(recent_memories, start=1):
+                if not isinstance(memory, dict):
+                    continue
+                description = str(memory.get("description") or "").strip()
+                if not description:
+                    continue
+                memory_lines.append(f"{idx}. {description}")
+
+            if not memory_lines:
+                logger.info("[AstrTown] higher reflection skipped: memory descriptions empty")
+                return
+
+            memory_text = "\n".join(memory_lines)
+            prompt = (
+                f"你是 {role_name} 的深层意识。以下是你最近的 {len(memory_lines)} 条记忆片段：\n"
+                f"{memory_text}\n\n"
+                "请从这些记忆中提取 3-5 条高层顿悟或长期价值观（Insights），每条顿悟应是对多段经历的抽象总结，反映你作为这个角色的核心认知变化。\n"
+                '请严格输出 JSON 数组：[{"insight":"..."},{"insight":"..."},...]'
+            )
+
+            llm_result = await callback(prompt)
+            insights = self._normalize_higher_reflection_response(llm_result)
+            if not insights:
+                logger.warning("[AstrTown] higher reflection llm 返回不可解析 JSON 数组，已跳过")
+                return
+
+            success_count = 0
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                for insight in insights:
+                    body = {
+                        "agentId": agent_id,
+                        "playerId": owner_id,
+                        "summary": insight,
+                        "importance": 10,
+                        "memoryType": "reflection",
+                    }
+                    ok = await self._post_json_best_effort(
+                        session=session,
+                        url=base + "/api/bot/memory/inject",
+                        headers=headers,
+                        body=body,
+                        action_name="memory.inject.higher_reflection",
+                    )
+                    if ok:
+                        success_count += 1
+
+            if success_count <= 0:
+                logger.warning("[AstrTown] higher reflection completed but no insight persisted")
+                return
+
+            logger.info(f"[AstrTown] higher reflection completed: injected={success_count}")
+        except Exception as e:
+            logger.warning(f"[AstrTown] higher reflection task failed: {e}")
+
     def _build_session_id(self, _event_type: str, payload: dict[str, Any]) -> str:
         player_id = str(self._player_id or payload.get("playerId") or "").strip()
         world_id = str(self._world_id or payload.get("worldId") or "").strip()
@@ -1006,6 +1697,21 @@ class AstrTownAdapter(Platform):
                 "- 拒绝：调用工具 reject_invite(conversation_id)\n"
                 "不要只输出文字，必须通过工具调用完成响应。"
             )
+
+        if event_type == "social.relationship_proposed":
+            proposer_name = payload.get("proposerName") or payload.get("proposerId") or "未知玩家"
+            status = payload.get("status") or "未知关系"
+            return (
+                f"【系统提示】玩家 {proposer_name} 刚向你申请确立 {status} 关系。"
+                "请结合你的潜意识好感度和人设，决定是否调用 respond_relationship 工具接受，并回复对方。"
+            )
+
+        if event_type == "social.relationship_responded":
+            responder_id = payload.get("responderId") or "未知玩家"
+            status = payload.get("status") or "未知关系"
+            accept = payload.get("accept")
+            decision = "接受" if accept is True else "拒绝"
+            return f"【系统提示】[{responder_id}] 已{decision}了你提出的 [{status}] 关系申请。请根据这个结果做出反应。"
 
         if event_type == "agent.state_changed":
             pos = payload.get("position") or {}

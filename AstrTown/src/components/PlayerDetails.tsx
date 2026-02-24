@@ -8,7 +8,7 @@ import { toastOnError } from '../toasts';
 import { useSendInput } from '../hooks/sendInput';
 import { GameId } from '../../convex/aiTown/ids';
 import { ServerGame } from '../hooks/serverGame';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import NpcHistoryDrawer from './NpcHistoryDrawer';
 
@@ -53,6 +53,51 @@ export default function PlayerDetails({
 
   const playerDescription = playerId && game.playerDescriptions.get(playerId);
   const [npcHistoryOpen, setNpcHistoryOpen] = useState(false);
+
+  const socialState = useQuery(
+    api.social.getPublicSocialState,
+    humanPlayer && playerId
+      ? {
+          worldId: worldId as string,
+          ownerId: playerId as string,
+          targetId: humanPlayer.id as string,
+        }
+      : 'skip',
+  );
+
+  const relationshipBadge = useMemo(() => {
+    const status = socialState?.relationship?.status;
+    if (!status) {
+      return '⏳ 尚未建立关系';
+    }
+    const normalized = status.trim().toLowerCase();
+    if (normalized === 'friend' || normalized === '朋友') {
+      return '🤝 朋友';
+    }
+    if (normalized === 'lover' || normalized === 'romantic' || normalized === '恋人') {
+      return '💕 恋人';
+    }
+    if (normalized === 'rival' || normalized === 'enemy' || normalized === '宿敌') {
+      return '⚔️ 宿敌';
+    }
+    return `🔖 ${status}`;
+  }, [socialState?.relationship?.status]);
+
+  const affinityScore = socialState?.affinity?.score;
+  const affinityLabel = socialState?.affinity?.label;
+  const normalizedAffinity =
+    affinityScore === undefined || affinityScore === null
+      ? null
+      : Math.max(-100, Math.min(100, affinityScore));
+  const affinityBarLeft =
+    normalizedAffinity === null
+      ? 50
+      : normalizedAffinity >= 0
+        ? 50
+        : 50 + normalizedAffinity / 2;
+  const affinityBarWidth = normalizedAffinity === null ? 0 : Math.abs(normalizedAffinity) / 2;
+  const affinityBarColor =
+    normalizedAffinity === null ? '#8B9BB4' : normalizedAffinity >= 0 ? '#22c55e' : '#ef4444';
 
   const startConversation = useSendInput(engineId, 'startConversation');
   const acceptInvite = useSendInput(engineId, 'acceptInvite');
@@ -220,6 +265,37 @@ export default function PlayerDetails({
             <span>{t('npcHistory.viewHistory')}</span>
           </div>
         </a>
+      )}
+      {!isMe && (
+        <div className="box mt-6">
+          <div className="bg-brown-700 p-3 sm:p-4 text-white">
+            <p className="font-display text-lg sm:text-xl tracking-wide">Social Status</p>
+            <div className="mt-2 inline-flex items-center rounded border border-clay-300/40 bg-clay-700 px-2 py-1 text-sm sm:text-base">
+              <span>{relationshipBadge}</span>
+            </div>
+
+            <div className="mt-4">
+              {normalizedAffinity === null ? (
+                <p className="text-sm sm:text-base">暂无情感数据</p>
+              ) : (
+                <>
+                  <p className="text-sm sm:text-base">[潜意识: {affinityLabel ?? '未知'}]</p>
+                  <div className="mt-2 h-4 w-full rounded border border-clay-300/40 bg-clay-700 relative overflow-hidden">
+                    <div className="absolute left-1/2 top-0 h-full w-px bg-clay-100/70" />
+                    <div
+                      className="absolute top-0 h-full"
+                      style={{
+                        marginLeft: `${affinityBarLeft}%`,
+                        width: `${affinityBarWidth}%`,
+                        backgroundColor: affinityBarColor,
+                      }}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
       {haveInvite && (
         <>

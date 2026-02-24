@@ -19,8 +19,10 @@
    - 代表文件：[`agentInputs`](AstrTown/convex/aiTown/agentInputs.ts) 与 [`conversationInputs`](AstrTown/convex/aiTown/conversation.ts:270)。
 
 3. **异步操作（Operation / Action）层**：
-   - 通过 Convex `internalAction` 调用 LLM/记忆等耗时逻辑，再回写 input 完成状态推进。
+   - 当前仅保留 operation 收尾逻辑：随机 sleep 后回写 `finishRememberConversation` input，不直接执行记忆生成。
    - 代表文件：[`agentOperations`](AstrTown/convex/aiTown/agentOperations.ts) 与 [`runAgentOperation()`](AstrTown/convex/aiTown/agent.ts:895)。
+
+> 记忆写入边界：由外部 plugin 通过 Bot API `/api/bot/memory/inject` 异步注入，链路为 [`postMemoryInject`](AstrTown/convex/botApi.ts:1165) → [`insertExternalMemory`](AstrTown/convex/agent/memory.ts:77)。
 
 此外，为了支持“外部控制（external controlled agent）”与网关系统，模块还包含：
 
@@ -38,6 +40,7 @@
 - **Agent**：绑定一个 `playerId` 的 NPC 控制器，负责“消费外控事件并驱动世界状态收敛（idle/离开/会话状态）”。见 [`class Agent`](AstrTown/convex/aiTown/agent.ts:101)。
 - **Conversation**：两名玩家之间的对话状态机，包含 invited / walkingOver / participating。见 [`class Conversation`](AstrTown/convex/aiTown/conversation.ts:15)。
 - **External Queue / External Event**：Agent 通过外控队列消费事件并执行；队列长期缺货会进入 sleeping/leaving 等兜底。见 [`ExternalQueueState`](AstrTown/convex/aiTown/agent.ts:50) 与 [`Agent.tick()`](AstrTown/convex/aiTown/agent.ts:444)。
+- **外部记忆注入链路**：记忆生成已移出引擎内自主对话路径；当前由外部 plugin 调用 Bot API 注入，落到 [`insertExternalMemory`](AstrTown/convex/agent/memory.ts:77)，其数据构造与查询入口分别为 [`buildExternalMemoryData()`](AstrTown/convex/agent/memory.ts:23)、[`getRecentMemories`](AstrTown/convex/agent/memory.ts:99)。
 - **World Event Dispatcher**：将对话开始/被邀请/消息/agent状态变化/队列补充请求等事件推送到网关，并根据事件类型定向到特定外控 agent。见 [`scheduleEventPush()`](AstrTown/convex/aiTown/worldEventDispatcher.ts:356)。
 
 ---
@@ -51,7 +54,7 @@
 | [`AstrTown/convex/aiTown/agent.ts`](AstrTown/convex/aiTown/agent.ts) | Agent 运行时模型、外控队列/空闲策略、tick 主循环（仅外控队列消费 + idle/超时兜底 + 会话状态收敛/离开）、operation 调度入口 | 975 | 35480 |
 | [`AstrTown/convex/aiTown/agentDescription.ts`](AstrTown/convex/aiTown/agentDescription.ts) | Agent 的“身份/计划”描述对象与序列化定义 | 27 | 770 |
 | [`AstrTown/convex/aiTown/agentInputs.ts`](AstrTown/convex/aiTown/agentInputs.ts) | Agent 相关输入处理：外控事件入队/清队列、operation 完成回调（remember/doSomething）、外控发送消息、创建 Agent（不再有外控开关） | 298 | 10136 |
-| [`AstrTown/convex/aiTown/agentOperations.ts`](AstrTown/convex/aiTown/agentOperations.ts) | Agent 异步 operations：仅保留 `agentRememberConversation`（供外部插件深层记忆链路调用） | 171 | 5465 |
+| [`AstrTown/convex/aiTown/agentOperations.ts`](AstrTown/convex/aiTown/agentOperations.ts) | Agent 异步 operations：仅保留 `agentRememberConversation`（随机 sleep 后回写 `finishRememberConversation`） | 171 | 5465 |
 | [`AstrTown/convex/aiTown/conversation.ts`](AstrTown/convex/aiTown/conversation.ts) | Conversation 运行时模型与输入处理：对话创建、邀请/拒绝/离开、打字状态、消息完成与外控事件推送挂钩 | 432 | 15194 |
 | [`AstrTown/convex/aiTown/conversationMembership.ts`](AstrTown/convex/aiTown/conversationMembership.ts) | 对话成员关系与状态（invited/walkingOver/participating）序列化与类封装 | 38 | 1126 |
 | [`AstrTown/convex/aiTown/worldEventDispatcher.ts`](AstrTown/convex/aiTown/worldEventDispatcher.ts) | 网关事件投递：事件 TTL、幂等键、定向目标选择、调度 push 到网关 | 599 | 18157 |
@@ -130,7 +133,7 @@
 
 - Agent 行为概览（当前仅外控驱动）：
   - [`Agent.tick()`](AstrTown/convex/aiTown/agent.ts:444) 每 tick 优先处理：
-    - `toRemember`：若存在则触发 remember 链路（对话结束后的记忆写入）。
+    - `toRemember`：若存在则触发 operation 收尾链路（随机 sleep + `finishRememberConversation` 回写）。
     - 会话状态收敛：根据 `ConversationMembership.status.kind` 处理 `invited` / `walkingOver` / `participating` 下的“自动走近/邀请超时/闲置离开”等兜底。
     - 外控事件消费：优先队列 → 普通队列 → 队列空则进入 prefetch/sleeping/leaving 逻辑。
 
@@ -248,25 +251,22 @@
 
 - 角色：Agent 的异步 internal actions（Convex `internalAction`）。
 - 核心导出：
-  - [`agentRememberConversation`](AstrTown/convex/aiTown/agentOperations.ts:18)
+  - [`agentRememberConversation`](AstrTown/convex/aiTown/agentOperations.ts:7)
 
-> 说明：`agentGenerateMessage` / `agentDoSomething` 已删除；`agentRememberConversation` 保留，用于外部插件的深层记忆链路（对话结束后的总结/写入）。
+> 说明：`agentGenerateMessage` / `agentDoSomething` 已删除；`agentRememberConversation` 保留，仅用于 operation 收尾（随机 sleep + 回写完成 input）。
 
 #### 3.4.2 导入的模块
 
 - Convex：`v`、[`internalAction`](AstrTown/convex/aiTown/agentOperations.ts:2)
-- 世界模型：[`WorldMap`](AstrTown/convex/aiTown/agentOperations.ts:3)
-- agent 相关：`rememberConversation`（`../agent/memory`）。
+- ids：`agentId/conversationId/playerId`（见 [`agentOperations.ts`](AstrTown/convex/aiTown/agentOperations.ts:3)）
+- API：`api`（[`agentOperations.ts`](AstrTown/convex/aiTown/agentOperations.ts:4)）
+- util：[`sleep`](AstrTown/convex/aiTown/agentOperations.ts:5)
 
-> 说明：用于 prompt 拼接/对话生成的 [`AstrTown/convex/agent/conversation.ts`](AstrTown/convex/agent/conversation.ts:1) 已删除，本模块不再依赖其 `start/continue/leaveConversationMessage`。
-- util：[`assertNever`](AstrTown/convex/aiTown/agentOperations.ts:11)、[`sleep`](AstrTown/convex/aiTown/agentOperations.ts:15)
-- ids/序列化：`agentId/conversationId/playerId`、[`serializedAgent`](AstrTown/convex/aiTown/agentOperations.ts:12)、[`serializedPlayer`](AstrTown/convex/aiTown/agentOperations.ts:16)
-- API：`api`、`internal`（用于 runMutation/runQuery）。
+> 说明：当前文件不再导入 `../agent/memory`；`convex/agent` 目录当前仅包含 [`memory.ts`](AstrTown/convex/agent/memory.ts)、[`embeddingsCache.ts`](AstrTown/convex/agent/embeddingsCache.ts)、[`schema.ts`](AstrTown/convex/agent/schema.ts)，旧的对话生成模块已移除。
 
 #### 3.4.3 导出的内容与调用路径
 
-- 记忆对话：[`agentRememberConversation`](AstrTown/convex/aiTown/agentOperations.ts:18)
-  - 调用 `rememberConversation(...)`。
+- operation 收尾：[`agentRememberConversation`](AstrTown/convex/aiTown/agentOperations.ts:7)
   - 随机 sleep。
   - 通过 `api.aiTown.main.sendInput` 发送 `finishRememberConversation`，由 [`agentInputs.finishRememberConversation`](AstrTown/convex/aiTown/agentInputs.ts:107) 收尾。
 
@@ -453,9 +453,8 @@
   - 调：[`movePlayer()`](AstrTown/convex/aiTown/agent.ts:28)
 
 - [`agentOperations`](AstrTown/convex/aiTown/agentOperations.ts)
-  - 调：LLM/记忆相关函数（`../agent/*`）
-  - 调：[`agentSendMessage`](AstrTown/convex/aiTown/agent.ts:913)
-  - 回写：`api.aiTown.main.sendInput` → [`agentInputs.finishRememberConversation`](AstrTown/convex/aiTown/agentInputs.ts:107) / [`agentInputs.finishDoSomething`](AstrTown/convex/aiTown/agentInputs.ts:130)
+  - 仅保留 [`agentRememberConversation`](AstrTown/convex/aiTown/agentOperations.ts:7)
+  - 逻辑：随机 sleep 后回写 `api.aiTown.main.sendInput('finishRememberConversation')` → [`agentInputs.finishRememberConversation`](AstrTown/convex/aiTown/agentInputs.ts:107)
 
 - [`Conversation`](AstrTown/convex/aiTown/conversation.ts)
   - tick 改变 `ConversationMembership.status`
@@ -473,7 +472,7 @@
 
 1. 世界循环调用 [`Agent.tick()`](AstrTown/convex/aiTown/agent.ts:444)
 2. 兜底与收敛（tick 内同步推进）：
-   - `toRemember` 存在 → 触发 remember 链路（异步）
+   - `toRemember` 存在 → 触发 operation 收尾链路（异步回写 `finishRememberConversation`）
    - 对话 invited / walkingOver / participating → 自动走近 + invite_timeout / idle_timeout 离开兜底（避免外部长期不下发指令导致卡死）
 3. 外部系统通过 input 驱动：
    - 推送外控事件：[`agentInputs.enqueueExternalEvents`](AstrTown/convex/aiTown/agentInputs.ts:46)
@@ -505,7 +504,7 @@
 - 其中对话相关的关键分支都在 [`Agent.tick()`](AstrTown/convex/aiTown/agent.ts:444) 内：
   - `invited`：接受/拒绝
   - `walkingOver`：寻路靠近
-  - `participating`：非外控会生成消息；外控则等待外部 `say`
+  - `participating`：等待外部 `say`，并由超时兜底触发离开
 
 ---
 

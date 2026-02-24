@@ -15,13 +15,15 @@
 
 1. **对话生成**：根据玩家身份/目标、对话上下文、相关记忆，调用 LLM 生成下一条对话文本。
    - 入口函数：[`startConversationMessage()`](AstrTown/convex/agent/conversation.ts:13)、[`continueConversationMessage()`](AstrTown/convex/agent/conversation.ts:78)、[`leaveConversationMessage()`](AstrTown/convex/agent/conversation.ts:136)
-2. **记忆写入**：对结束的对话做总结，评估重要性，生成 embedding，写入 memories + memoryEmbeddings。
-   - 入口函数：[`rememberConversation()`](AstrTown/convex/agent/memory.ts:24)
+2. **记忆写入（外部注入）**：由外部请求提供 summary / importance / memoryType，`memory.ts` 负责构造 memory.data、生成 embedding 并写入 memories + memoryEmbeddings。
+   - 入口函数：[`insertExternalMemory`](AstrTown/convex/agent/memory.ts:77)
 3. **记忆检索与排序**：基于 embedding 的向量搜索得到候选，再用“相关性 + 重要性 + 近期性”三因子综合排序，并触达（touch）更新时间。
-   - 入口函数：[`searchMemories()`](AstrTown/convex/agent/memory.ts:158) + [`rankAndTouchMemories`](AstrTown/convex/agent/memory.ts:187)
-4. **Embedding 缓存**：对任意文本生成 embedding 时，先按 SHA-256 哈希查询缓存表，缺失再批量调用 embedding 接口并回写。
+   - 入口函数：[`searchMemories()`](AstrTown/convex/agent/memory.ts:129) + [`rankAndTouchMemories`](AstrTown/convex/agent/memory.ts:158)
+4. **最近记忆查询**：按 `playerId` 倒序读取最近记忆，供 HTTP 接口直接返回。
+   - 入口函数：[`getRecentMemories`](AstrTown/convex/agent/memory.ts:99)
+5. **Embedding 缓存**：对任意文本生成 embedding 时，先按 SHA-256 哈希查询缓存表，缺失再批量调用 embedding 接口并回写。
    - 入口函数：[`fetch()`](AstrTown/convex/agent/embeddingsCache.ts:9)、[`fetchBatch()`](AstrTown/convex/agent/embeddingsCache.ts:14)
-5. **数据表与索引定义**：声明 memories、memoryEmbeddings、embeddingsCache 三张表、索引与向量索引维度。
+6. **数据表与索引定义**：声明 memories、memoryEmbeddings、embeddingsCache 三张表、索引与向量索引维度。
    - 表定义：[`memoryTables`](AstrTown/convex/agent/schema.ts:32)、[`agentTables`](AstrTown/convex/agent/schema.ts:47)
 
 整体上该模块通过“**结构化数据（world / messages 等） + 向量记忆检索 + LLM 生成**”来驱动 NPC/玩家的对话与长期记忆。
@@ -40,11 +42,12 @@
 
 - **记忆（Memory）**：存储在 `memories` 表中，包含 `description`、`importance`、`lastAccess`、`data(type=relationship|conversation|reflection)`，并通过 `embeddingId` 关联到 `memoryEmbeddings` 表中的向量。
   - 字段定义：[`memoryFields`](AstrTown/convex/agent/schema.ts:6)
+  - 在外部注入路径中，`data` 由 [`buildExternalMemoryData()`](AstrTown/convex/agent/memory.ts:23) 按 `memoryType` 构造。
 - **向量记忆索引（memoryEmbeddings vectorIndex）**：按 playerId 过滤、基于 embedding 相似度检索候选记忆。
   - 定义：[`memoryTables.memoryEmbeddings`](AstrTown/convex/agent/schema.ts:37)
-  - 检索：[`searchMemories()`](AstrTown/convex/agent/memory.ts:158)
-- **反思（Reflection）**：当近期记忆的重要性累计超过阈值时，触发 LLM 抽象出高层洞见，写入 reflection 类型记忆。
-  - 触发与保存：[`reflectOnMemories()`](AstrTown/convex/agent/memory.ts:325) + [`insertReflectionMemories`](AstrTown/convex/agent/memory.ts:291)
+  - 检索：[`searchMemories()`](AstrTown/convex/agent/memory.ts:129)
+- **最近记忆视图**：对 `memories` 表按 `playerId` 索引倒序读取并裁剪字段。
+  - 查询：[`getRecentMemories`](AstrTown/convex/agent/memory.ts:99)
 - **Embedding 缓存**：对常用提示文本（例如 “A is talking to B”）缓存 embedding，降低重复调用。
   - 表：[`agentTables.embeddingsCache`](AstrTown/convex/agent/schema.ts:47)
   - 读写：[`getEmbeddingsByText`](AstrTown/convex/agent/embeddingsCache.ts:69)、[`writeEmbeddings`](AstrTown/convex/agent/embeddingsCache.ts:94)
@@ -59,7 +62,7 @@
 |---|---|---|---:|---:|
 | conversation.ts | [`AstrTown/convex/agent/conversation.ts`](AstrTown/convex/agent/conversation.ts) | 构建对话 Prompt、拼接历史消息/相关记忆、调用 LLM 生成对话文本；提供 prompt 数据的 internalQuery | 352 | 11914 |
 | embeddingsCache.ts | [`AstrTown/convex/agent/embeddingsCache.ts`](AstrTown/convex/agent/embeddingsCache.ts) | embedding 缓存（hash->embedding），批量缺失填充与回写 | 110 | 3561 |
-| memory.ts | [`AstrTown/convex/agent/memory.ts`](AstrTown/convex/agent/memory.ts) | 记忆写入/检索/排序/触达、对话总结记忆、反思记忆生成与保存 | 450 | （未在列表中显示，本次读取未提供） |
+| memory.ts | [`AstrTown/convex/agent/memory.ts`](AstrTown/convex/agent/memory.ts) | 外部记忆注入（insertExternalMemory/buildExternalMemoryData）、记忆检索/排序/触达、最近记忆查询 | 235 | （未在列表中显示，本次读取未提供） |
 | schema.ts | [`AstrTown/convex/agent/schema.ts`](AstrTown/convex/agent/schema.ts) | memories/memoryEmbeddings/embeddingsCache 表结构、索引、向量索引维度定义 | 53 | （未在列表中显示，本次读取未提供） |
 
 ---
@@ -120,7 +123,7 @@
 - [`startConversationMessage()`](AstrTown/convex/agent/conversation.ts:13)
   - `ctx.runQuery(selfInternal.queryPromptData, ...)` → [`queryPromptData`](AstrTown/convex/agent/conversation.ts:249)
   - `embeddingsCache.fetch(...)` → [`fetch()`](AstrTown/convex/agent/embeddingsCache.ts:9)
-  - `memory.searchMemories(...)` → [`searchMemories()`](AstrTown/convex/agent/memory.ts:158)
+  - `memory.searchMemories(...)` → [`searchMemories()`](AstrTown/convex/agent/memory.ts:129)
   - 组装 prompt：[`agentPrompts()`](AstrTown/convex/agent/conversation.ts:185)、[`previousConversationPrompt()`](AstrTown/convex/agent/conversation.ts:201)、[`relatedMemoriesPrompt()`](AstrTown/convex/agent/conversation.ts:218)
   - `chatCompletion(...)`（外部）
   - [`trimContentPrefx()`](AstrTown/convex/agent/conversation.ts:71)
@@ -128,7 +131,7 @@
 - [`continueConversationMessage()`](AstrTown/convex/agent/conversation.ts:78)
   - `ctx.runQuery(selfInternal.queryPromptData, ...)` → [`queryPromptData`](AstrTown/convex/agent/conversation.ts:249)
   - `embeddingsCache.fetch(...)` → [`fetch()`](AstrTown/convex/agent/embeddingsCache.ts:9)
-  - `memory.searchMemories(..., 3)` → [`searchMemories()`](AstrTown/convex/agent/memory.ts:158)
+  - `memory.searchMemories(..., 3)` → [`searchMemories()`](AstrTown/convex/agent/memory.ts:129)
   - `previousMessages(...)` → [`previousMessages()`](AstrTown/convex/agent/conversation.ts:229) → `ctx.runQuery(api.messages.listMessages, ...)`（外部 api）
   - `chatCompletion(...)` + [`trimContentPrefx()`](AstrTown/convex/agent/conversation.ts:71)
 
@@ -137,7 +140,7 @@
 
 #### 3.1.6 文件间关系
 
-- 依赖 `memory`：使用 [`searchMemories()`](AstrTown/convex/agent/memory.ts:158) 返回的 `Memory[]`，并在 [`relatedMemoriesPrompt()`](AstrTown/convex/agent/conversation.ts:218) 中读取 `memory.description`。
+- 依赖 `memory`：使用 [`searchMemories()`](AstrTown/convex/agent/memory.ts:129) 返回的 `Memory[]`，并在 [`relatedMemoriesPrompt()`](AstrTown/convex/agent/conversation.ts:218) 中读取 `memory.description`。
 - 依赖 `embeddingsCache`：使用 [`fetch()`](AstrTown/convex/agent/embeddingsCache.ts:9) 获取用于记忆检索的查询 embedding。
 
 ---
@@ -191,75 +194,81 @@
 #### 3.3.1 文件基本信息
 
 - 职责：
-  - 对话结束后“总结为记忆”并持久化（conversation memory）。
+  - 接收外部注入的记忆摘要（summary / importance / memoryType），构造 `memory.data` 并持久化。
   - 记忆向量检索与三因子排序。
-  - 记忆触达节流（throttle）更新 lastAccess。
-  - “反思记忆”生成：当重要性累计超过阈值时，用 LLM 归纳洞见并保存。
+  - 记忆触达节流（throttle）更新 `lastAccess`。
+  - 提供“最近记忆”查询（按 `playerId` 倒序）。
+- 已移除旧链路（当前文件中不再定义）：
+  - `rememberConversation`、`loadConversation`、`loadMessages`
+  - `calculateImportance`、`reflectOnMemories`、`getReflectionMemories`、`insertReflectionMemories`
 
 #### 3.3.2 导入的模块
 
-- Convex：`v`、[`ActionCtx`](AstrTown/convex/agent/memory.ts:2)、[`DatabaseReader`](AstrTown/convex/agent/memory.ts:2)、[`internalMutation`](AstrTown/convex/agent/memory.ts:2)、[`internalQuery`](AstrTown/convex/agent/memory.ts:2)
+- Convex：`v`、[`ActionCtx`](AstrTown/convex/agent/memory.ts:2)、[`DatabaseReader`](AstrTown/convex/agent/memory.ts:2)、[`internalAction`](AstrTown/convex/agent/memory.ts:2)、[`internalMutation`](AstrTown/convex/agent/memory.ts:2)、[`query`](AstrTown/convex/agent/memory.ts:2)
 - 数据模型：`Doc`, `Id`：[`memory.ts`](AstrTown/convex/agent/memory.ts:3)
 - API：`internal`：[`memory.ts`](AstrTown/convex/agent/memory.ts:4)
-- LLM：`LLMMessage`, `chatCompletion`, `fetchEmbedding`：[`memory.ts`](AstrTown/convex/agent/memory.ts:5)
+- LLM：`fetchEmbedding`：[`memory.ts`](AstrTown/convex/agent/memory.ts:5)
 - 工具：`asyncMap`：[`memory.ts`](AstrTown/convex/agent/memory.ts:6)
-- AI Town：`GameId`, `agentId`, `conversationId`, `playerId`：[`memory.ts`](AstrTown/convex/agent/memory.ts:7)
-- 玩家类型：`SerializedPlayer`：[`memory.ts`](AstrTown/convex/agent/memory.ts:8)
-- schema：`memoryFields`：[`memory.ts`](AstrTown/convex/agent/memory.ts:9)
+- AI Town：`GameId`, `agentId`, `playerId`：[`memory.ts`](AstrTown/convex/agent/memory.ts:7)
+- schema：`memoryFields`：[`memory.ts`](AstrTown/convex/agent/memory.ts:8)
 
 #### 3.3.3 导出的内容
 
-- 常量：[`MEMORY_ACCESS_THROTTLE`](AstrTown/convex/agent/memory.ts:12)
-- 类型：`Memory`, `MemoryType`, `MemoryOfType`：[`memory.ts`](AstrTown/convex/agent/memory.ts:18)
-- 记忆写入/对话总结：[`rememberConversation()`](AstrTown/convex/agent/memory.ts:24)
-- internalQuery：[`loadConversation`](AstrTown/convex/agent/memory.ts:88)、[`loadMessages`](AstrTown/convex/agent/memory.ts:230)、[`getReflectionMemories`](AstrTown/convex/agent/memory.ts:398)
-- 记忆检索：[`searchMemories()`](AstrTown/convex/agent/memory.ts:158)
-- internalMutation：[`rankAndTouchMemories`](AstrTown/convex/agent/memory.ts:187)、[`insertMemory`](AstrTown/convex/agent/memory.ts:273)、[`insertReflectionMemories`](AstrTown/convex/agent/memory.ts:291)
-- 查询最近某类记忆：[`latestMemoryOfType()`](AstrTown/convex/agent/memory.ts:438)
+- 常量：[`MEMORY_ACCESS_THROTTLE`](AstrTown/convex/agent/memory.ts:11)
+- 类型：`Memory`, `MemoryType`, `MemoryOfType`：[`memory.ts`](AstrTown/convex/agent/memory.ts:17)
+- internalAction：[`insertExternalMemory`](AstrTown/convex/agent/memory.ts:77)
+- query：[`getRecentMemories`](AstrTown/convex/agent/memory.ts:99)
+- 记忆检索：[`searchMemories()`](AstrTown/convex/agent/memory.ts:129)
+- internalMutation：[`rankAndTouchMemories`](AstrTown/convex/agent/memory.ts:158)、[`insertMemory`](AstrTown/convex/agent/memory.ts:204)
+- 查询最近某类记忆：[`latestMemoryOfType()`](AstrTown/convex/agent/memory.ts:223)
 
 #### 3.3.4 定义的函数和变量
 
-- `MEMORY_OVERFETCH`：向量检索 overfetch 倍数（10x）：[`memory.ts`](AstrTown/convex/agent/memory.ts:15)
-- `selfInternal`：`internal.agent.memory`：[`memory.ts`](AstrTown/convex/agent/memory.ts:16)
-- 归一化与范围：[`makeRange()`](AstrTown/convex/agent/memory.ts:176)、[`normalize()`](AstrTown/convex/agent/memory.ts:182)
-- 重要性评估：[`calculateImportance()`](AstrTown/convex/agent/memory.ts:246)
-- 反思流程：[`reflectOnMemories()`](AstrTown/convex/agent/memory.ts:325)
+- `MEMORY_OVERFETCH`：向量检索 overfetch 倍数（10x）：[`memory.ts`](AstrTown/convex/agent/memory.ts:14)
+- `selfInternal`：`internal.agent.memory`：[`memory.ts`](AstrTown/convex/agent/memory.ts:15)
+- 外部记忆 data 构造：[`buildExternalMemoryData()`](AstrTown/convex/agent/memory.ts:23)
+- 外部记忆注入实现：[`insertExternalMemoryImpl()`](AstrTown/convex/agent/memory.ts:53)
+- 归一化与范围：[`makeRange()`](AstrTown/convex/agent/memory.ts:147)、[`normalize()`](AstrTown/convex/agent/memory.ts:153)
 
 #### 3.3.5 文件内部关系
 
-- 对话总结写入：[`rememberConversation()`](AstrTown/convex/agent/memory.ts:24)
-  1. 拉取对话与参与者：`ctx.runQuery(selfInternal.loadConversation, ...)` → [`loadConversation`](AstrTown/convex/agent/memory.ts:88)
-  2. 拉取对话消息：`ctx.runQuery(selfInternal.loadMessages, ...)` → [`loadMessages`](AstrTown/convex/agent/memory.ts:230)
-  3. 将消息拼成 LLM prompt，`chatCompletion(...)` 生成 summary：[`rememberConversation()`](AstrTown/convex/agent/memory.ts:24)
-  4. `calculateImportance(description)`：[`calculateImportance()`](AstrTown/convex/agent/memory.ts:246)
-  5. `fetchEmbedding(description)` 生成 embedding：[`rememberConversation()`](AstrTown/convex/agent/memory.ts:24)
-  6. 写入：`ctx.runMutation(selfInternal.insertMemory, ...)` → [`insertMemory`](AstrTown/convex/agent/memory.ts:273)
-  7. 触发反思：[`reflectOnMemories()`](AstrTown/convex/agent/memory.ts:325)
+- 外部记忆注入：[`insertExternalMemory`](AstrTown/convex/agent/memory.ts:77)
+  1. 校验 `worldId/agentId/playerId/summary/importance/memoryType` 参数。
+  2. 调用 [`insertExternalMemoryImpl()`](AstrTown/convex/agent/memory.ts:53)。
+  3. `fetchEmbedding(summary)` 生成 embedding。
+  4. [`buildExternalMemoryData()`](AstrTown/convex/agent/memory.ts:23) 根据 `memoryType` 生成 `data`：
+     - `relationship` → `{ type, playerId }`
+     - `reflection` → `{ type, relatedMemoryIds: [] }`
+     - `conversation`（默认）→ 生成伪 `conversationId`：`c:${now}:${worldId}:${agentId}`
+     - 其他类型直接抛错 `Unsupported memoryType`
+  5. `ctx.runMutation(selfInternal.insertMemory, ...)` → [`insertMemory`](AstrTown/convex/agent/memory.ts:204)
 
-- 记忆检索：[`searchMemories()`](AstrTown/convex/agent/memory.ts:158)
-  1. `ctx.vectorSearch('memoryEmbeddings', 'embedding', { vector, filter, limit })`：[`searchMemories()`](AstrTown/convex/agent/memory.ts:158)
-  2. `ctx.runMutation(selfInternal.rankAndTouchMemories, { candidates, n })` → [`rankAndTouchMemories`](AstrTown/convex/agent/memory.ts:187)
+- 最近记忆查询：[`getRecentMemories`](AstrTown/convex/agent/memory.ts:99)
+  1. 校验 `count` 必须为正整数。
+  2. `ctx.db.query('memories').withIndex('playerId', ...).order('desc').take(count)`。
+  3. 返回裁剪后的字段集合（`_id/_creationTime/playerId/description/importance/lastAccess/data`）。
 
-- 排序与 touch：[`rankAndTouchMemories`](AstrTown/convex/agent/memory.ts:187)
-  - 从候选 embeddingId 找到 memory：`memories.withIndex('embeddingId', ...)`
+- 记忆检索：[`searchMemories()`](AstrTown/convex/agent/memory.ts:129)
+  1. `ctx.vectorSearch('memoryEmbeddings', 'embedding', { vector, filter, limit })`：[`searchMemories()`](AstrTown/convex/agent/memory.ts:129)
+  2. `ctx.runMutation(selfInternal.rankAndTouchMemories, { candidates, n })` → [`rankAndTouchMemories`](AstrTown/convex/agent/memory.ts:158)
+
+- 排序与 touch：[`rankAndTouchMemories`](AstrTown/convex/agent/memory.ts:158)
+  - 从候选 `embeddingId` 找到 memory：`memories.withIndex('embeddingId', ...)`
   - 计算三类分数并归一化后求和：
     - relevance：`args.candidates[idx]._score`
     - importance：`memory.importance`
-    - recency：`0.99 ** floor(hoursSinceAccess)`（基于 lastAccess）
-  - 排序、取 top n，然后对 lastAccess 节流更新：[`MEMORY_ACCESS_THROTTLE`](AstrTown/convex/agent/memory.ts:12)
-
-- 反思：[`reflectOnMemories()`](AstrTown/convex/agent/memory.ts:325)
-  1. 拉取最近记忆与最后一次 reflection 时间：`ctx.runQuery(internal.agent.memory.getReflectionMemories, ...)` → [`getReflectionMemories`](AstrTown/convex/agent/memory.ts:398)
-  2. 计算自上次反思以来的 importance 累计，阈值判断：`sum > 500`：[`reflectOnMemories()`](AstrTown/convex/agent/memory.ts:325)
-  3. 用 LLM 输出 JSON insights，`JSON.parse`，为每条 insight 计算 importance + embedding。
-  4. 写入 reflection memories：`ctx.runMutation(selfInternal.insertReflectionMemories, ...)` → [`insertReflectionMemories`](AstrTown/convex/agent/memory.ts:291)
+    - recency：`0.99 ** floor(hoursSinceAccess)`（基于 `lastAccess`）
+  - 排序、取 top n，然后对 `lastAccess` 节流更新：[`MEMORY_ACCESS_THROTTLE`](AstrTown/convex/agent/memory.ts:11)
 
 #### 3.3.6 文件间关系
 
 - 与 [`schema.ts`](AstrTown/convex/agent/schema.ts) 的结构耦合点：
-  - `memoryFields` 用于声明 `insertMemory` 参数（剔除 embeddingId）：[`memoryFields`](AstrTown/convex/agent/schema.ts:6) + [`insertMemory`](AstrTown/convex/agent/memory.ts:273)
+  - `memoryFields` 用于声明 `insertMemory` 参数（剔除 embeddingId）：[`memoryFields`](AstrTown/convex/agent/schema.ts:6) + [`insertMemory`](AstrTown/convex/agent/memory.ts:204)
   - `memoryEmbeddings` 向量索引名称与字段：`ctx.vectorSearch('memoryEmbeddings', 'embedding', ...)` 对应 [`memoryTables.memoryEmbeddings`](AstrTown/convex/agent/schema.ts:37)
-- 被 [`conversation.ts`](AstrTown/convex/agent/conversation.ts) 调用：[`searchMemories()`](AstrTown/convex/agent/memory.ts:158)
+- 被 [`conversation.ts`](AstrTown/convex/agent/conversation.ts) 调用：[`searchMemories()`](AstrTown/convex/agent/memory.ts:129)
+- 被 [`botApi.ts`](AstrTown/convex/botApi.ts) 调用：
+  - 记忆注入 HTTP：[`postMemoryInject`](AstrTown/convex/botApi.ts:1165) -> `ctx.runAction(internal.agent.memory.insertExternalMemory, ...)`：[`botApi.ts`](AstrTown/convex/botApi.ts:1204)
+  - 最近记忆 HTTP：[`getRecentMemories`](AstrTown/convex/botApi.ts:990) -> `ctx.runQuery(api.agent.memory.getRecentMemories, ...)`：[`botApi.ts`](AstrTown/convex/botApi.ts:1024)
 
 ---
 
@@ -310,12 +319,15 @@
 以 `convex/agent` 内部 4 个文件为节点：
 
 - [`conversation.ts`](AstrTown/convex/agent/conversation.ts)
-  - 依赖 [`memory.ts`](AstrTown/convex/agent/memory.ts)：调用 [`searchMemories()`](AstrTown/convex/agent/memory.ts:158)
+  - 依赖 [`memory.ts`](AstrTown/convex/agent/memory.ts)：调用 [`searchMemories()`](AstrTown/convex/agent/memory.ts:129)
   - 依赖 [`embeddingsCache.ts`](AstrTown/convex/agent/embeddingsCache.ts)：调用 [`fetch()`](AstrTown/convex/agent/embeddingsCache.ts:9)
 
 - [`memory.ts`](AstrTown/convex/agent/memory.ts)
   - 依赖 [`schema.ts`](AstrTown/convex/agent/schema.ts)：导入 [`memoryFields`](AstrTown/convex/agent/schema.ts:6)
   - 间接依赖（通过数据表名/索引约定）`schema.ts` 中的 `memoryEmbeddings` vectorIndex 定义：[`memoryTables.memoryEmbeddings`](AstrTown/convex/agent/schema.ts:37)
+  - 被 [`botApi.ts`](AstrTown/convex/botApi.ts) 通过 internal/api 调用：
+    - `insertExternalMemory`（注入）
+    - `getRecentMemories`（最近记忆）
 
 - [`embeddingsCache.ts`](AstrTown/convex/agent/embeddingsCache.ts)
   - 与 [`schema.ts`](AstrTown/convex/agent/schema.ts) 的 `embeddingsCache` 表定义对应（表名与索引名一致）：[`agentTables.embeddingsCache`](AstrTown/convex/agent/schema.ts:49)
@@ -327,6 +339,7 @@
 
 - `conversation.ts -> embeddingsCache.ts`
 - `conversation.ts -> memory.ts`
+- `botApi.ts -> memory.ts`（memory/inject + memory/recent）
 - `memory.ts -> schema.ts`
 - `embeddingsCache.ts -> schema.ts`（通过表结构约定对应）
 
@@ -345,8 +358,8 @@
    - 文本：`"${player.name} is talking to ${otherPlayer.name}"`
    - 调用 embedding 缓存：[`embeddingsCache.fetch()`](AstrTown/convex/agent/embeddingsCache.ts:9)
 3. **记忆检索**：
-   - [`memory.searchMemories()`](AstrTown/convex/agent/memory.ts:158)
-   - 内部先 `ctx.vectorSearch`，后 `rankAndTouchMemories` 三因子重排并 touch。
+   - [`memory.searchMemories()`](AstrTown/convex/agent/memory.ts:129)
+   - 内部先 `ctx.vectorSearch`，后 [`rankAndTouchMemories`](AstrTown/convex/agent/memory.ts:158) 三因子重排并 touch。
 4. **Prompt 构建**：
    - 拼接：身份/目标（[`agentPrompts()`](AstrTown/convex/agent/conversation.ts:185)）
    - 上次聊天时间（[`previousConversationPrompt()`](AstrTown/convex/agent/conversation.ts:201)）
@@ -359,19 +372,19 @@
 
 ### 5.2 Agent 记忆检索流程
 
-入口：[`searchMemories()`](AstrTown/convex/agent/memory.ts:158)
+入口：[`searchMemories()`](AstrTown/convex/agent/memory.ts:129)
 
 1. **向量检索候选**：
    - `ctx.vectorSearch('memoryEmbeddings', 'embedding', { vector, filter, limit })`
    - filter：`playerId` 必须匹配（保证是“某个玩家视角的记忆”）
    - limit：`n * MEMORY_OVERFETCH`（默认 3 * 10 = 30）
 2. **候选转记忆并排序 + touch**：
-   - mutation：[`rankAndTouchMemories`](AstrTown/convex/agent/memory.ts:187)
+   - mutation：[`rankAndTouchMemories`](AstrTown/convex/agent/memory.ts:158)
    - 将 embeddingId 映射回 `memories` 表记录（按 `embeddingId` 索引查）。
    - 计算综合分数后排序，取 top n。
-   - 对选中的 memory 做 lastAccess 节流更新：[`MEMORY_ACCESS_THROTTLE`](AstrTown/convex/agent/memory.ts:12)
+   - 对选中的 memory 做 lastAccess 节流更新：[`MEMORY_ACCESS_THROTTLE`](AstrTown/convex/agent/memory.ts:11)
 3. **返回 memories（按最终排序）**：
-   - [`searchMemories()`](AstrTown/convex/agent/memory.ts:158) 最终返回 `Memory[]`。
+   - [`searchMemories()`](AstrTown/convex/agent/memory.ts:129) 最终返回 `Memory[]`。
 
 ### 5.3 向量搜索机制（在本模块内的落点）
 
@@ -379,7 +392,20 @@
   - `defineTable({ playerId, embedding: v.array(v.float64()) }).vectorIndex('embedding', ...)`
   - `filterFields: ['playerId']`：支持检索时按 playerId 过滤。
   - `dimensions: EMBEDDING_DIMENSION`：维度与 embedding 模型输出一致。
-- 使用位置：[`searchMemories()`](AstrTown/convex/agent/memory.ts:158)
+- 使用位置：[`searchMemories()`](AstrTown/convex/agent/memory.ts:129)
+
+### 5.4 外部注入与最近记忆查询的数据流
+
+1. **外部注入记忆**：
+   - HTTP 路由注册：[`http.route()`](AstrTown/convex/http.ts:167) + [`postMemoryInject`](AstrTown/convex/botApi.ts:1165)
+   - 进入 memory 模块：`ctx.runAction(internal.agent.memory.insertExternalMemory, ...)`：[`botApi.ts`](AstrTown/convex/botApi.ts:1204)
+   - 在 [`insertExternalMemory`](AstrTown/convex/agent/memory.ts:77) 中完成参数校验与调用。
+   - 在 [`insertExternalMemoryImpl()`](AstrTown/convex/agent/memory.ts:53) 中生成 embedding，并通过 [`buildExternalMemoryData()`](AstrTown/convex/agent/memory.ts:23) 构造 `data` 后写入。
+
+2. **最近记忆查询**：
+   - HTTP 路由注册：[`http.route()`](AstrTown/convex/http.ts:83) + [`getRecentMemories`](AstrTown/convex/botApi.ts:990)
+   - 进入 memory 模块：`ctx.runQuery(api.agent.memory.getRecentMemories, ...)`：[`botApi.ts`](AstrTown/convex/botApi.ts:1024)
+   - 在 [`getRecentMemories`](AstrTown/convex/agent/memory.ts:99) 中按 `playerId` 倒序读取并返回裁剪字段。
 
 ---
 
@@ -387,7 +413,7 @@
 
 ### 6.1 三因子排序算法（相关性 + 重要性 + 近期性）
 
-算法实现位置：[`rankAndTouchMemories`](AstrTown/convex/agent/memory.ts:187)
+算法实现位置：[`rankAndTouchMemories`](AstrTown/convex/agent/memory.ts:158)
 
 **输入**：
 - `candidates`: `[{ _id: Id<'memoryEmbeddings'>, _score: number }, ...]`（向量检索结果）
@@ -402,18 +428,18 @@
    - `hoursSinceAccess = (now - memory.lastAccess) / 1000 / 60 / 60`
    - `recency = 0.99 ** floor(hoursSinceAccess)`：时间越久分数越低（指数衰减）
 3. **三类分数分别归一化（min-max）**
-   - 相关性范围：[`makeRange()`](AstrTown/convex/agent/memory.ts:176) 作用于 candidates 的 `_score`
+   - 相关性范围：[`makeRange()`](AstrTown/convex/agent/memory.ts:147) 作用于 candidates 的 `_score`
    - 重要性范围：作用于 memories 的 `importance`
    - 近期性范围：作用于 `recencyScore`
-   - 归一化函数：[`normalize()`](AstrTown/convex/agent/memory.ts:182)
+   - 归一化函数：[`normalize()`](AstrTown/convex/agent/memory.ts:153)
 4. **计算 overallScore 并排序**
    - `overall = norm(relevance) + norm(importance) + norm(recency)`
    - 按 `overallScore desc` 排序，取前 `n`。
 5. **touch（更新 lastAccess，带节流）**
    - 若 `memory.lastAccess < now - MEMORY_ACCESS_THROTTLE` 则 `patch({ lastAccess: now })`
-   - 节流常量：[`MEMORY_ACCESS_THROTTLE`](AstrTown/convex/agent/memory.ts:12)
+   - 节流常量：[`MEMORY_ACCESS_THROTTLE`](AstrTown/convex/agent/memory.ts:11)
 
-**输出**：top n 的 `{ memory, overallScore }`，供 [`searchMemories()`](AstrTown/convex/agent/memory.ts:158) 返回 memories。
+**输出**：top n 的 `{ memory, overallScore }`，供 [`searchMemories()`](AstrTown/convex/agent/memory.ts:129) 返回 memories。
 
 > 备注：该算法对向量检索结果进行了二次排序，引入“重要性/近期性”两个非向量维度，使得记忆检索不完全由 embedding 相似度主导。
 
@@ -429,13 +455,16 @@
 
 该 hash 作为 `embeddingsCache.textHash` 的索引字段（[`agentTables.embeddingsCache`](AstrTown/convex/agent/schema.ts:49)），实现“文本内容一致 → 复用 embedding”。
 
-### 6.3 反思（Reflection）生成的阈值触发与 JSON 输出约束
+### 6.3 外部注入记忆的数据构造与落库
 
-实现位置：[`reflectOnMemories()`](AstrTown/convex/agent/memory.ts:325)
+实现位置：[`insertExternalMemory`](AstrTown/convex/agent/memory.ts:77) / [`insertExternalMemoryImpl()`](AstrTown/convex/agent/memory.ts:53) / [`buildExternalMemoryData()`](AstrTown/convex/agent/memory.ts:23)
 
-- 触发条件：最近 100 条记忆中，自上次 reflection 以来的 `importance` 累加 > 500：[`reflectOnMemories()`](AstrTown/convex/agent/memory.ts:339)
-- 输出约束（Prompt）：要求 LLM “只输出 JSON、无换行无空白、可被 JSON.parse() 解析”：[`reflectOnMemories()`](AstrTown/convex/agent/memory.ts:350)
-- 解析失败会捕获异常并记录日志，返回 false：[`reflectOnMemories()`](AstrTown/convex/agent/memory.ts:371)
+- 输入：`worldId`、`agentId`、`playerId`、`summary`、`importance`、可选 `memoryType`。
+- 处理流程：
+  - 先 `fetchEmbedding(summary)` 获取 embedding：[`memory.ts`](AstrTown/convex/agent/memory.ts:62)
+  - 再由 [`buildExternalMemoryData()`](AstrTown/convex/agent/memory.ts:23) 根据 `memoryType` 生成 `data`（relationship/reflection/conversation）。
+  - 最后调用 [`insertMemory`](AstrTown/convex/agent/memory.ts:204) 同步写入 `memoryEmbeddings` 与 `memories`。
+- 约束：当 `memoryType` 不是 `relationship/reflection/conversation` 时直接抛错：[`memory.ts`](AstrTown/convex/agent/memory.ts:44)
 
 ---
 

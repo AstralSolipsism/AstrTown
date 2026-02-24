@@ -29,7 +29,7 @@ AstrTown/
 
 | 文件 | 字符数 | 行数 | 复杂性原因 |
 |------|--------|------|-----------|
-| [`botApi.ts`](AstrTown/convex/botApi.ts) | 34,429 | 1,038 | 8个 HTTP 端点、8个 mutation/query、命令映射、幂等性控制、事件队列 |
+| [`botApi.ts`](AstrTown/convex/botApi.ts) | 39,298 | 1,218 | 14个 HTTP 端点、9个 mutation/query、命令映射、幂等性控制、事件队列、社交/记忆扩展接口 |
 | [`npcService.ts`](AstrTown/convex/npcService.ts) | 15,763 | 505 | 5个 HTTP 端点、4个 mutation/query/action、CORS 处理、Token 管理 |
 
 **复杂性来源**：
@@ -47,7 +47,7 @@ AstrTown/
 
 | 文件路径 | 功能描述 | 字符数 | 行数 |
 |----------|----------|--------|------|
-| [`AstrTown/convex/botApi.ts`](AstrTown/convex/botApi.ts) | 外部 Bot API 服务 | 34,429 | 1,038 |
+| [`AstrTown/convex/botApi.ts`](AstrTown/convex/botApi.ts) | 外部 Bot API 服务 | 39,298 | 1,218 |
 | [`AstrTown/convex/npcService.ts`](AstrTown/convex/npcService.ts) | NPC 自助服务 | 15,763 | 505 |
 
 ---
@@ -61,8 +61,8 @@ AstrTown/
 | 属性 | 值 |
 |------|-----|
 | 文件路径 | [`AstrTown/convex/botApi.ts`](AstrTown/convex/botApi.ts) |
-| 字符数 | 34,429 |
-| 行数 | 1,038 |
+| 字符数 | 39,298 |
+| 行数 | 1,218 |
 | 主要功能 | 外部 Bot API 接口服务 |
 
 #### 3.1.2 导入的模块
@@ -72,61 +72,68 @@ import { httpAction, mutation, query } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { v } from 'convex/values';
 import { Id } from './_generated/dataModel';
-import { api } from './_generated/api';
+import { api, internal } from './_generated/api';
 import { insertInput } from './aiTown/insertInput';
 import type { ExternalEventItem } from './aiTown/agent';
+import * as memory from './agent/memory';
+import * as embeddingsCache from './agent/embeddingsCache';
 ```
 
 #### 3.1.3 导出的内容
 
 **类型定义**：
-- [`VerifiedBotToken`](AstrTown/convex/botApi.ts:39-46) - Bot Token 验证结果类型
+- [`VerifiedBotToken`](AstrTown/convex/botApi.ts:41-48) - Bot Token 验证结果类型
 
-**Query 函数** (2个)：
-- [`verifyBotTokenQuery`](AstrTown/convex/botApi.ts:48-76) - 验证 Bot Token
-- [`getWorldById`](AstrTown/convex/botApi.ts:377-382) - 获取世界信息
-- [`getExternalQueueStatus`](AstrTown/convex/botApi.ts:384-429) - 获取外部队列状态
-- [`tokenDocByToken`](AstrTown/convex/botApi.ts:277-291) - 根据 Token 获取文档
+**Query 函数** (4个)：
+- [`verifyBotTokenQuery`](AstrTown/convex/botApi.ts:50-78) - 验证 Bot Token
+- [`tokenDocByToken`](AstrTown/convex/botApi.ts:279-293) - 根据 Token 获取幂等记录
+- [`getWorldById`](AstrTown/convex/botApi.ts:379-384) - 获取世界信息
+- [`getExternalQueueStatus`](AstrTown/convex/botApi.ts:386-431) - 获取外部队列状态
 
-**Mutation 函数** (4个)：
-- [`updatePlayerDescription`](AstrTown/convex/botApi.ts:293-331) - 更新玩家描述
-- [`patchTokenUsage`](AstrTown/convex/botApi.ts:333-347) - 更新 Token 使用记录
-- [`writeExternalBotMessage`](AstrTown/convex/botApi.ts:349-375) - 写入外部 Bot 消息
-- [`postCommandBatch`](AstrTown/convex/botApi.ts:431-479) - 批量提交命令
-- [`createBotToken`](AstrTown/convex/botApi.ts:943-969) - 创建 Bot Token
+**Mutation 函数** (5个)：
+- [`updatePlayerDescription`](AstrTown/convex/botApi.ts:295-333) - 更新玩家描述
+- [`patchTokenUsage`](AstrTown/convex/botApi.ts:335-349) - 更新 Token 使用记录
+- [`writeExternalBotMessage`](AstrTown/convex/botApi.ts:351-377) - 写入外部 Bot 消息
+- [`postCommandBatch`](AstrTown/convex/botApi.ts:433-478) - 批量提交命令
+- [`createBotToken`](AstrTown/convex/botApi.ts:846-872) - 创建 Bot Token
 
-**HTTP Action 函数** (9个)：
-- [`postCommandBatchHttp`](AstrTown/convex/botApi.ts:483-558) - 批量提交命令 HTTP 端点
-- [`postCommand`](AstrTown/convex/botApi.ts:620-765) - 提交单个命令 HTTP 端点
-- [`postEventAck`](AstrTown/convex/botApi.ts:767-780) - 事件确认 HTTP 端点
-- [`getWorldState`](AstrTown/convex/botApi.ts:782-791) - 获取世界状态 HTTP 端点
-- [`getAgentStatus`](AstrTown/convex/botApi.ts:793-824) - 获取 Agent 状态 HTTP 端点
-- [`postControl`](AstrTown/convex/botApi.ts:826-920) - 控制外部控制模式 HTTP 端点
-- [`postTokenValidate`](AstrTown/convex/botApi.ts:922-943) - 验证 Token HTTP 端点
-- [`postDescriptionUpdate`](AstrTown/convex/botApi.ts:973-1008) - 更新描述 HTTP 端点
-- [`postTokenCreate`](AstrTown/convex/botApi.ts:1010-1040) - 创建 Token HTTP 端点
-- [`postMemorySearch`](AstrTown/convex/botApi.ts:1042-1087) - 记忆检索 HTTP 端点（深层记忆网络：向量化检索）
+**HTTP Action 函数** (14个)：
+- [`postCommandBatchHttp`](AstrTown/convex/botApi.ts:480-555) - 批量提交命令 HTTP 端点
+- [`postCommand`](AstrTown/convex/botApi.ts:617-761) - 提交单个命令 HTTP 端点
+- [`postEventAck`](AstrTown/convex/botApi.ts:763-776) - 事件确认 HTTP 端点
+- [`getWorldState`](AstrTown/convex/botApi.ts:778-787) - 获取世界状态 HTTP 端点
+- [`getAgentStatus`](AstrTown/convex/botApi.ts:789-820) - 获取 Agent 状态 HTTP 端点
+- [`postTokenValidate`](AstrTown/convex/botApi.ts:823-844) - 验证 Token HTTP 端点
+- [`postDescriptionUpdate`](AstrTown/convex/botApi.ts:874-909) - 更新描述 HTTP 端点
+- [`postTokenCreate`](AstrTown/convex/botApi.ts:911-941) - 创建 Token HTTP 端点
+- [`postMemorySearch`](AstrTown/convex/botApi.ts:943-988) - 记忆检索 HTTP 端点（向量化检索）
+- [`getRecentMemories`](AstrTown/convex/botApi.ts:990-1034) - 近期记忆查询 HTTP 端点
+- [`postSocialAffinity`](AstrTown/convex/botApi.ts:1036-1083) - 社交好感更新 HTTP 端点
+- [`postSocialRelationship`](AstrTown/convex/botApi.ts:1085-1132) - 社交关系写入 HTTP 端点
+- [`getSocialState`](AstrTown/convex/botApi.ts:1134-1163) - 社交状态查询 HTTP 端点
+- [`postMemoryInject`](AstrTown/convex/botApi.ts:1165-1218) - 外部记忆注入 HTTP 端点
 
 **辅助函数**：
-- [`jsonResponse`](AstrTown/convex/botApi.ts:9-17) - JSON 响应构建器
-- [`unauthorized`](AstrTown/convex/botApi.ts:19-21) - 401 响应
-- [`badRequest`](AstrTown/convex/botApi.ts:23-25) - 400 响应
-- [`conflict`](AstrTown/convex/botApi.ts:27-29) - 409 响应
-- [`parseBearerToken`](AstrTown/convex/botApi.ts:31-37) - 解析 Bearer Token
-- [`verifyBotToken`](AstrTown/convex/botApi.ts:78-80) - 验证 Bot Token 包装函数
-- [`normalizeExternalEventKind`](AstrTown/convex/botApi.ts:184-189) - 规范化外部事件类型
-- [`normalizeExternalEventPriority`](AstrTown/convex/botApi.ts:191-200) - 规范化优先级
-- [`normalizeExternalEventArgs`](AstrTown/convex/botApi.ts:202-207) - 规范化事件参数
-- [`mapCommandTypeToExternalEventKind`](AstrTown/convex/botApi.ts:209-228) - 命令类型映射
-- [`defaultQueuePriorityForCommand`](AstrTown/convex/botApi.ts:230-236) - 默认队列优先级
-- [`buildExternalEventFromCommand`](AstrTown/convex/botApi.ts:238-259) - 从命令构建外部事件
-- [`loadWorldAndAgent`](AstrTown/convex/botApi.ts:261-275) - 加载世界和 Agent
-- [`isKnownEngineParamError`](AstrTown/convex/botApi.ts:566-575) - 判断已知引擎参数错误
-- [`normalizeCommandArgsForEngine`](AstrTown/convex/botApi.ts:577-616) - 规范化命令参数
+- [`jsonResponse`](AstrTown/convex/botApi.ts:11-19) - JSON 响应构建器
+- [`unauthorized`](AstrTown/convex/botApi.ts:21-23) - 401 响应
+- [`badRequest`](AstrTown/convex/botApi.ts:25-27) - 400 响应
+- [`conflict`](AstrTown/convex/botApi.ts:29-31) - 409 响应
+- [`parseBearerToken`](AstrTown/convex/botApi.ts:33-39) - 解析 Bearer Token
+- [`verifyBotToken`](AstrTown/convex/botApi.ts:80-82) - 验证 Bot Token 包装函数
+- [`normalizeExternalEventKind`](AstrTown/convex/botApi.ts:186-191) - 规范化外部事件类型
+- [`normalizeExternalEventPriority`](AstrTown/convex/botApi.ts:193-202) - 规范化优先级
+- [`normalizeExternalEventArgs`](AstrTown/convex/botApi.ts:204-209) - 规范化事件参数
+- [`mapCommandTypeToExternalEventKind`](AstrTown/convex/botApi.ts:211-230) - 命令类型映射
+- [`defaultQueuePriorityForCommand`](AstrTown/convex/botApi.ts:232-238) - 默认队列优先级
+- [`buildExternalEventFromCommand`](AstrTown/convex/botApi.ts:240-261) - 从命令构建外部事件
+- [`loadWorldAndAgent`](AstrTown/convex/botApi.ts:263-277) - 加载世界和 Agent
+- [`ParameterValidationError`](AstrTown/convex/botApi.ts:557-563) - 参数校验错误类型
+- [`isKnownEngineParamError`](AstrTown/convex/botApi.ts:565-574) - 判断已知引擎参数错误
+- [`normalizeCommandArgsForEngine`](AstrTown/convex/botApi.ts:576-615) - 规范化命令参数
 
 **常量定义**：
-- [`commandMappings`](AstrTown/convex/botApi.ts:103-168) - 命令映射表
-- [`supportedExternalEventKinds`](AstrTown/convex/botApi.ts:172-182) - 支持的外部事件类型
+- [`commandMappings`](AstrTown/convex/botApi.ts:105-170) - 命令映射表
+- [`supportedExternalEventKinds`](AstrTown/convex/botApi.ts:174-184) - 支持的外部事件类型
 
 #### 3.1.4 定义的类型和常量
 
@@ -164,29 +171,24 @@ botApi.ts 内部结构
 │   ├── Token 解析 (parseBearerToken)
 │   ├── 参数规范化 (normalizeExternalEventKind, normalizeExternalEventPriority, normalizeExternalEventArgs)
 │   ├── 命令映射 (mapCommandTypeToExternalEventKind, buildExternalEventFromCommand)
-│   └── 错误判断 (isKnownEngineParamError)
+│   ├── 命令参数适配 (normalizeCommandArgsForEngine, loadWorldAndAgent)
+│   └── 错误判断 (ParameterValidationError, isKnownEngineParamError)
 ├── 数据访问层
 │   ├── verifyBotTokenQuery - Token 验证
+│   ├── tokenDocByToken - Token 文档查询
 │   ├── getWorldById - 世界查询
-│   ├── getExternalQueueStatus - 队列状态
-│   └── tokenDocByToken - Token 文档查询
+│   └── getExternalQueueStatus - 队列状态
 ├── 数据修改层
 │   ├── updatePlayerDescription - 更新玩家描述
 │   ├── patchTokenUsage - 更新 Token 使用
 │   ├── writeExternalBotMessage - 写入消息
-│   ├── postCommandBatch - 批量命令
+│   ├── postCommandBatch - 批量命令入队
 │   └── createBotToken - 创建 Token
-  └── HTTP API 层
-      ├── postCommandBatchHttp - 批量命令接口
-      ├── postCommand - 单命令接口
-      ├── postEventAck - 事件确认接口
-      ├── getWorldState - 世界状态接口
-      ├── getAgentStatus - Agent 状态接口
-      ├── postControl - 控制模式接口
-      ├── postTokenValidate - Token 验证接口
-      ├── postDescriptionUpdate - 描述更新接口
-      ├── postTokenCreate - Token 创建接口
-      └── postMemorySearch - 记忆检索接口（深层记忆网络）
+└── HTTP API 层
+    ├── 命令与状态：postCommandBatchHttp / postCommand / postEventAck / getWorldState / getAgentStatus
+    ├── Token 与描述：postTokenValidate / postDescriptionUpdate / postTokenCreate
+    ├── 记忆能力：postMemorySearch / getRecentMemories / postMemoryInject
+    └── 社交能力：postSocialAffinity / postSocialRelationship / getSocialState
 ```
 
 
@@ -330,7 +332,11 @@ botApi.ts 依赖的表:
 ├── agents (Agent 信息 - 嵌入在 worlds 中)
 ├── players (玩家信息 - 嵌入在 worlds 中)
 ├── conversations (对话信息 - 嵌入在 worlds 中)
-└── messages (消息存储)
+├── messages (消息存储)
+├── memories / memoryEmbeddings (记忆检索与注入)
+├── embeddingsCache (查询向量缓存)
+├── affinities (社交好感)
+└── relationships (社交关系)
 
 npcService.ts 依赖的表:
 ├── botTokens (Bot Token 存储)
@@ -343,16 +349,20 @@ npcService.ts 依赖的表:
 
 | HTTP 方法 | 路径 | 处理函数 | 功能 |
 |-----------|------|----------|------|
-| POST | `/api/bot/command` | [`postCommand`](AstrTown/convex/botApi.ts:620) | 提交单个命令 |
-| POST | `/api/bot/command/batch` | [`postCommandBatchHttp`](AstrTown/convex/botApi.ts:483) | 批量提交命令 |
-| POST | `/api/bot/event/ack` | [`postEventAck`](AstrTown/convex/botApi.ts:767) | 事件确认 |
-| GET | `/api/bot/world` | [`getWorldState`](AstrTown/convex/botApi.ts:782) | 获取世界状态 |
-| GET | `/api/bot/agent/status` | [`getAgentStatus`](AstrTown/convex/botApi.ts:793) | 获取 Agent 状态 |
-| POST | `/api/bot/control` | [`postControl`](AstrTown/convex/botApi.ts:826) | 控制外部模式 |
-| POST | `/api/bot/token/validate` | [`postTokenValidate`](AstrTown/convex/botApi.ts:922) | 验证 Token |
-| POST | `/api/bot/description` | [`postDescriptionUpdate`](AstrTown/convex/botApi.ts:973) | 更新描述 |
-| POST | `/api/bot/token/create` | [`postTokenCreate`](AstrTown/convex/botApi.ts:1010) | 创建 Token |
-| POST | `/api/bot/memory/search` | [`postMemorySearch`](AstrTown/convex/botApi.ts:1042) | 记忆检索（深层记忆网络：向量化检索 + 时间衰减/重要性评估） |
+| POST | `/api/bot/command` | [`postCommand`](AstrTown/convex/botApi.ts:617) | 提交单个命令 |
+| POST | `/api/bot/command/batch` | [`postCommandBatchHttp`](AstrTown/convex/botApi.ts:480) | 批量提交命令 |
+| POST | `/api/bot/event` | [`postEventAck`](AstrTown/convex/botApi.ts:763) | 事件确认 |
+| GET | `/api/bot/world-state` | [`getWorldState`](AstrTown/convex/botApi.ts:778) | 获取世界状态 |
+| GET | `/api/bot/agent-status` | [`getAgentStatus`](AstrTown/convex/botApi.ts:789) | 获取 Agent 状态 |
+| POST | `/api/bot/token/validate` | [`postTokenValidate`](AstrTown/convex/botApi.ts:823) | 验证 Token |
+| POST | `/api/bot/description/update` | [`postDescriptionUpdate`](AstrTown/convex/botApi.ts:874) | 更新描述 |
+| POST | `/api/bot/token/create` | [`postTokenCreate`](AstrTown/convex/botApi.ts:911) | 创建 Token |
+| POST | `/api/bot/memory/search` | [`postMemorySearch`](AstrTown/convex/botApi.ts:943) | 记忆检索（向量化检索 + 时间衰减/重要性评估） |
+| GET | `/api/bot/memory/recent` | [`getRecentMemories`](AstrTown/convex/botApi.ts:990) | 查询近期记忆 |
+| POST | `/api/bot/social/affinity` | [`postSocialAffinity`](AstrTown/convex/botApi.ts:1036) | 更新社交好感 |
+| GET | `/api/bot/social/state` | [`getSocialState`](AstrTown/convex/botApi.ts:1134) | 查询社交状态 |
+| POST | `/api/bot/social/relationship` | [`postSocialRelationship`](AstrTown/convex/botApi.ts:1085) | 写入社交关系 |
+| POST | `/api/bot/memory/inject` | [`postMemoryInject`](AstrTown/convex/botApi.ts:1165) | 注入外部记忆 |
 | OPTIONS | `/api/npc/*` | [`optionsNpc`](AstrTown/convex/npcService.ts:350) | CORS 预检 |
 | POST | `/api/npc/create` | [`postNpcCreate`](AstrTown/convex/npcService.ts:354) | 创建 NPC |
 | GET | `/api/npc/list` | [`getNpcList`](AstrTown/convex/npcService.ts:405) | 获取 NPC 列表 |
@@ -383,7 +393,7 @@ npcService.ts 依赖的表:
 │ 5. normalizeCommandArgsForEngine() - 规范化参数               │
 │ 6. 根据 enqueueMode 选择执行路径:                             │
 │    - 'queue': 构建外部事件并加入队列                           │
-│    - 'immediate': 直接执行命令                                │
+│    - 'immediate' 或未传：直接执行命令                          │
 └─────────────────────────────────────────────────────────────┘
     │
     │ enqueueMode === 'queue'
@@ -409,7 +419,7 @@ npcService.ts 依赖的表:
 │ 2. 引擎在 tick 中消费队列中的事件                             │
 └─────────────────────────────────────────────────────────────┘
     │
-    │ enqueueMode === 'immediate'
+    │ enqueueMode !== 'queue'
     │
     ▼
 ┌─────────────────────────────────────────────────────────────┐
@@ -420,7 +430,8 @@ npcService.ts 依赖的表:
 │   2. sendInput('externalBotSendMessage')                     │
 │                                                              │
 │ do_something (go_home_and_sleep):                             │
-│   sendInput('setExternalControl', enabled: false)            │
+│   sendInput('finishDoSomething', idle activity 60s)          │
+│   （不再切换外部控制状态）                                     │
 │                                                              │
 │ 其他命令:                                                     │
 │   sendInput(commandMappings[commandType].inputName, args)     │
@@ -571,7 +582,7 @@ NPC 管理应用
 
 ### 5.5 记忆检索流程（深层记忆网络打通）
 
-**对应端点**：[`postMemorySearch`](AstrTown/convex/botApi.ts:1042-1087)
+**对应端点**：[`postMemorySearch`](AstrTown/convex/botApi.ts:943-988)
 
 ```
 外部 Bot 客户端
@@ -603,13 +614,93 @@ NPC 管理应用
 异常：500 → { ok: false, error }
 ```
 
+### 5.6 近期记忆查询流程
+
+**对应端点**：[`getRecentMemories`](AstrTown/convex/botApi.ts:990-1034)
+
+```
+外部 Bot 客户端
+    │
+    │ 1) GET /api/bot/memory/recent?worldId=...&playerId=...&count=...
+    │    Headers: Authorization: Bearer {token}
+    ▼
+┌─────────────────────────────────────────────────────────────┐
+│ getRecentMemories (HTTP Action)                              │
+├─────────────────────────────────────────────────────────────┤
+│ 1. parseBearerToken() + verifyBotToken()                     │
+│ 2. 读取 query 参数：worldId/playerId/count                   │
+│ 3. 参数校验：count 为正整数                                  │
+│ 4. 绑定校验：                                                │
+│    - worldId 必须与 token 绑定 worldId 一致                  │
+│    - playerId 必须与 token 绑定 playerId 一致                │
+│ 5. 调用 agent.memory.getRecentMemories 查询最近记忆          │
+└─────────────────────────────────────────────────────────────┘
+    │
+    ▼
+返回：{ ok: true, memories: [...] }
+```
+
+### 5.7 社交能力写入与查询流程
+
+**对应端点**：
+- [`postSocialAffinity`](AstrTown/convex/botApi.ts:1036-1083)
+- [`postSocialRelationship`](AstrTown/convex/botApi.ts:1085-1132)
+- [`getSocialState`](AstrTown/convex/botApi.ts:1134-1163)
+
+```
+外部 Bot 客户端
+    │
+    ├─ POST /api/bot/social/affinity
+    │    Body: { ownerId, targetId, scoreDelta, label }
+    │
+    ├─ POST /api/bot/social/relationship
+    │    Body: { playerAId, playerBId, status, establishedAt }
+    │
+    └─ GET /api/bot/social/state?ownerId=...&targetId=...
+    ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 统一入口：Token + 参数校验                                    │
+├─────────────────────────────────────────────────────────────┤
+│ 1. parseBearerToken() + verifyBotToken()                     │
+│ 2. 各接口执行字段级参数校验                                   │
+│ 3. 调用 social 内部函数：                                     │
+│    - updateAffinity (internalMutation)                        │
+│    - upsertRelationship (internalMutation)                    │
+│    - getSocialState (internalQuery)                           │
+│ 4. worldId 一律使用 token 绑定 worldId 字符串化后传入         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 5.8 外部记忆注入流程
+
+**对应端点**：[`postMemoryInject`](AstrTown/convex/botApi.ts:1165-1218)
+
+```
+外部 Bot 客户端
+    │
+    │ POST /api/bot/memory/inject
+    │ Body: { agentId, playerId, summary, importance, memoryType? }
+    ▼
+┌─────────────────────────────────────────────────────────────┐
+│ postMemoryInject (HTTP Action)                                │
+├─────────────────────────────────────────────────────────────┤
+│ 1. parseBearerToken() + verifyBotToken()                     │
+│ 2. 校验 agentId/playerId/summary/importance/memoryType?      │
+│ 3. 调用 agent.memory.insertExternalMemory (internalAction)   │
+│    - 内部会生成 embedding 并写入 memories/memoryEmbeddings    │
+└─────────────────────────────────────────────────────────────┘
+    │
+    ▼
+返回：{ ok: true }
+```
+
 ---
 
 ## 6. 关键算法
 
 ### 6.1 命令映射算法
 
-**位置**: [`commandMappings`](AstrTown/convex/botApi.ts:103-168)
+**位置**: [`commandMappings`](AstrTown/convex/botApi.ts:105-170)
 
 **功能**: 将外部命令类型映射到引擎输入类型
 
@@ -644,7 +735,7 @@ const commandMappings: Record<CommandType, CommandMapping> = {
 
 ### 6.2 外部事件构建算法
 
-**位置**: [`buildExternalEventFromCommand`](AstrTown/convex/botApi.ts:238-259)
+**位置**: [`buildExternalEventFromCommand`](AstrTown/convex/botApi.ts:240-261)
 
 **功能**: 从命令构建外部事件项
 
@@ -680,7 +771,7 @@ function buildExternalEventFromCommand(
 
 ### 6.3 参数规范化算法
 
-**位置**: [`normalizeCommandArgsForEngine`](AstrTown/convex/botApi.ts:577-616)
+**位置**: [`normalizeCommandArgsForEngine`](AstrTown/convex/botApi.ts:576-615)
 
 **功能**: 规范化命令参数以适配引擎
 
@@ -819,7 +910,7 @@ function generateTokenValue() {
 
 ### 6.7 优先级分配算法
 
-**位置**: [`defaultQueuePriorityForCommand`](AstrTown/convex/botApi.ts:230-236)
+**位置**: [`defaultQueuePriorityForCommand`](AstrTown/convex/botApi.ts:232-238)
 
 **功能**: 为命令分配默认队列优先级
 
@@ -849,18 +940,19 @@ function defaultQueuePriorityForCommand(
 
 | 错误类型 | HTTP 状态码 | 函数 | 说明 |
 |----------|-------------|------|------|
-| `AUTH_FAILED` | 401 | [`unauthorized`](AstrTown/convex/botApi.ts:19) | 认证失败 |
-| `INVALID_ARGS` | 400 | [`badRequest`](AstrTown/convex/botApi.ts:23) | 参数错误 |
+| `AUTH_FAILED` | 401 | [`unauthorized`](AstrTown/convex/botApi.ts:21) | 认证失败 |
+| `INVALID_ARGS` | 400 | [`badRequest`](AstrTown/convex/botApi.ts:25) | 参数错误 |
+| `INVALID_JSON` | 400 | [`badRequest`](AstrTown/convex/botApi.ts:25) | 请求体 JSON 非法 |
 | `INTERNAL_ERROR` | 500 | - | 内部错误 |
-| `INVALID_TOKEN` | 401 | [`verifyBotTokenQuery`](AstrTown/convex/botApi.ts:48) | Token 无效 |
-| `TOKEN_EXPIRED` | 401 | [`verifyBotTokenQuery`](AstrTown/convex/botApi.ts:48) | Token 过期 |
+| `INVALID_TOKEN` | 401 | [`verifyBotTokenQuery`](AstrTown/convex/botApi.ts:50) | Token 无效 |
+| `TOKEN_EXPIRED` | 401 | [`verifyBotTokenQuery`](AstrTown/convex/botApi.ts:50) | Token 过期 |
 | `FORBIDDEN` | 403 | [`forbidden`](AstrTown/convex/npcService.ts:59) | 权限不足 |
 | `WORLD_NOT_FOUND` | 400 | - | 世界不存在 |
 | `NPC_NOT_FOUND` | 400 | - | NPC 不存在 |
 
 ### 7.2 参数验证错误
 
-**位置**: [`ParameterValidationError`](AstrTown/convex/botApi.ts:558-564)
+**位置**: [`ParameterValidationError`](AstrTown/convex/botApi.ts:557-563)
 
 ```typescript
 class ParameterValidationError extends Error {
@@ -874,7 +966,7 @@ class ParameterValidationError extends Error {
 
 ### 7.3 引擎错误识别
 
-**位置**: [`isKnownEngineParamError`](AstrTown/convex/botApi.ts:566-575)
+**位置**: [`isKnownEngineParamError`](AstrTown/convex/botApi.ts:565-574)
 
 ```typescript
 function isKnownEngineParamError(message: string): boolean {
@@ -957,7 +1049,7 @@ function buildCorsHeaders(request: Request): HeadersInit {
    - `playerDescriptions` 表使用 `worldId` 复合索引
 
 2. **批量操作**:
-   - [`postCommandBatch`](AstrTown/convex/botApi.ts:431) 支持批量提交命令
+   - [`postCommandBatch`](AstrTown/convex/botApi.ts:433) 支持批量提交命令
    - 减少网络往返
 
 ### 9.2 队列管理
@@ -984,9 +1076,9 @@ function buildCorsHeaders(request: Request): HeadersInit {
 ### 10.1 模块特点
 
 1. **高复杂性**:
-   - 两个文件共 50,192 字符
-   - 13 个 HTTP 端点
-   - 10 个 mutation/query/action
+   - 两个文件共 55,061 字符
+   - 19 个 HTTP 端点
+   - 14 个 mutation/query/action（不含 HTTP Action）
    - 多种认证和授权机制
 
 2. **高可靠性**:
@@ -1087,5 +1179,5 @@ function buildCorsHeaders(request: Request): HeadersInit {
 ---
 
 **文档版本**: 1.0
-**最后更新**: 2026-02-22
+**最后更新**: 2026-02-24
 **作者**: 架构分析工具

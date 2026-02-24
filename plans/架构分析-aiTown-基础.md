@@ -38,7 +38,7 @@
 
 - **ID 与表结构（ids / schema）**：
   - [`ids`](../AstrTown/convex/aiTown/ids.ts) 定义 Game 内部的字符串 ID（短码+序号）规则，并提供解析/分配函数。
-  - [`schema`](../AstrTown/convex/aiTown/schema.ts) 定义 aiTown 在 Convex 数据库的表结构：worlds/worldStatus/maps/playerDescriptions 以及归档表与参与关系图表（`agentDescriptions` 已移除）。
+  - [`schema`](../AstrTown/convex/aiTown/schema.ts) 定义 aiTown 在 Convex 数据库的表结构：worlds/worldStatus/maps/playerDescriptions、归档表、参与关系图表，以及社交关系表 `affinities/relationships`（`agentDescriptions` 已移除）。
 
 - **输入写入（insertInput）**：
   - [`insertInput`](../AstrTown/convex/aiTown/insertInput.ts) 将世界级输入写入到底层 engine input 表（经 engineId 索引），是 UI/外部调用到引擎输入队列的桥。
@@ -75,7 +75,7 @@
 | [`AstrTown/convex/aiTown/game.ts`](../AstrTown/convex/aiTown/game.ts) | Game 总控：加载/运行/tick、diff 生成与保存、触发 agent 操作与 world 事件调度 | 497 | （未获取） |
 | [`AstrTown/convex/aiTown/world.ts`](../AstrTown/convex/aiTown/world.ts) | World 聚合容器：players/conversations + 历史位置 buffer 的序列化 | 65 | （未获取） |
 | [`AstrTown/convex/aiTown/ids.ts`](../AstrTown/convex/aiTown/ids.ts) | GameId 规则：短码+序号；解析与分配；输入校验器（v.string） | 32 | （未获取） |
-| [`AstrTown/convex/aiTown/schema.ts`](../AstrTown/convex/aiTown/schema.ts) | Convex 表定义：worlds/worldStatus/maps/playerDescriptions/归档表/参与关系图 | 79 | （未获取） |
+| [`AstrTown/convex/aiTown/schema.ts`](../AstrTown/convex/aiTown/schema.ts) | Convex 表定义：worlds/worldStatus/maps/playerDescriptions/归档表/参与关系图/社交关系表（affinities、relationships） | 90 | （未获取） |
 | [`AstrTown/convex/aiTown/insertInput.ts`](../AstrTown/convex/aiTown/insertInput.ts) | 世界输入写入：根据 worldId 找 engineId，调用引擎层插入 inputs | 20 | （未获取） |
 | [`AstrTown/convex/aiTown/location.ts`](../AstrTown/convex/aiTown/location.ts) | Location 数据结构与历史字段配置；从 Player 抽取当前位置 | 32 | （未获取） |
 | [`AstrTown/convex/aiTown/worldMap.ts`](../AstrTown/convex/aiTown/worldMap.ts) | WorldMap 地图数据结构：tile 层、动画精灵；序列化 | 74 | （未获取） |
@@ -301,7 +301,7 @@
 ### 3.8 [`AstrTown/convex/aiTown/schema.ts`](../AstrTown/convex/aiTown/schema.ts)
 
 - 文件基本信息
-  - 角色：集中定义 aiTown 的 Convex 数据表（用于持久化世界状态、地图、描述与归档）。
+  - 角色：集中定义 aiTown 的 Convex 数据表（用于持久化世界状态、地图、描述、归档与社交关系）。
 
 - 导入的模块
   - `convex/values`：`v`
@@ -319,6 +319,8 @@
   - `playerDescriptions`：描述性文本数据，索引 `worldId + playerId`
   - `archivedPlayers/archivedConversations/archivedAgents`：归档表
   - `participatedTogether`：玩家间关系图（多索引：edge/conversation/playerHistory）
+  - `affinities`：社交亲和度表，索引 `by_owner_target`（`worldId + ownerId + targetId`）
+  - `relationships`：社交关系表，索引 `by_players`（`worldId + player1Id + player2Id`）
 
 ---
 
@@ -386,10 +388,11 @@
 - `db.replace(worldId, newWorld)`
      - 可选 upsert playerDescriptions/maps
      - 根据 `agentOperations` 分发 worldEventDispatcher 事件（conversationStarted/invited/message/conversation.timeout/action.finished/agentStateChanged/queueRefillRequested）
+     - `agentRememberConversation` 当前实现仅包含随机 sleep 与回写 `finishRememberConversation` 输入（见 [`agentRememberConversation`](../AstrTown/convex/aiTown/agentOperations.ts:7)），不再直接调用记忆生成函数。
        - 注：当前架构中 NPC 统一视为“外部插件控制的 Player（外控 NPC）”，引擎侧不再内置 LLM prompt 拼接与自主决策逻辑。
 - 文件间关系（核心依赖）
   - Game 组合并驱动：[`World`](../AstrTown/convex/aiTown/world.ts)、[`Player`](../AstrTown/convex/aiTown/player.ts)、`Conversation/Agent`（不在本清单）
-  - 持久化：Convex tables（worlds、worldStatus、maps、descriptions、archived*、participatedTogether）由 [`schema`](../AstrTown/convex/aiTown/schema.ts) 定义
+  - 持久化：Convex tables（worlds、worldStatus、maps、descriptions、archived*、participatedTogether、affinities、relationships）由 [`schema`](../AstrTown/convex/aiTown/schema.ts) 定义
   - 数据压缩：[`HistoricalObject`](../AstrTown/convex/engine/historicalObject.ts) + [`locationFields`](../AstrTown/convex/aiTown/location.ts)
 
 ---
@@ -473,6 +476,10 @@
 - **归档与关系图**：
   - 当 world 中移除 player/conversation/agent 时，写入 archived* 表。
   - conversation 归档同时写 `participatedTogether` 图边（见 [`Game.saveDiff()`](../AstrTown/convex/aiTown/game.ts:258)）。
+
+- **社交关系分表（schema 扩展）**：
+  - `affinities`：`worldId/ownerId/targetId/score/label`，索引 `by_owner_target`。
+  - `relationships`：`worldId/player1Id/player2Id/status/establishedAt`，索引 `by_players`。
 
 ---
 

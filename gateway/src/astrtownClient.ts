@@ -46,8 +46,16 @@ export type UpdateDescriptionResponse = {
   statusCode?: number;
 };
 
+export type UpsertRelationshipResponse = {
+  ok: boolean;
+  relationshipId?: string;
+  error?: string;
+  code?: string;
+  statusCode?: number;
+};
+
 export class AstrTownClient {
-  private readonly baseUrl: string;
+  readonly baseUrl: string;
   private readonly fetchFn: typeof fetch;
 
   constructor(deps: AstrTownClientDeps) {
@@ -218,5 +226,49 @@ export class AstrTownClient {
     }
 
     return { ok: true };
+  }
+
+  async upsertRelationship(
+    token: string,
+    args: { playerAId: string; playerBId: string; status: string; establishedAt: number },
+  ): Promise<UpsertRelationshipResponse> {
+    let res: Response;
+    try {
+      res = await this.fetchFn(`${this.baseUrl}/api/bot/social/relationship`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(args),
+      });
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message ?? e ?? 'Network error') };
+    }
+
+    const json = (await res.json().catch(() => ({}))) as any;
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: String(json?.error ?? json?.message ?? `Request failed with status ${res.status}`),
+        code: typeof json?.code === 'string' ? json.code : undefined,
+        statusCode: res.status,
+      };
+    }
+
+    const ok = Boolean(json?.ok ?? true);
+    if (!ok) {
+      return {
+        ok: false,
+        error: String(json?.error ?? json?.message ?? 'Relationship upsert rejected'),
+        code: typeof json?.code === 'string' ? json.code : undefined,
+        statusCode: res.status,
+      };
+    }
+
+    return {
+      ok: true,
+      relationshipId: typeof json?.relationshipId === 'string' ? json.relationshipId : undefined,
+    };
   }
 }

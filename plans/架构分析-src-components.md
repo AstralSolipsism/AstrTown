@@ -88,6 +88,8 @@
   - 右侧 DOM UI：
     - 根据选中玩家/当前对话自动重定向选择对象
     - 发送引擎输入（startConversation/accept/reject/leave）
+    - 查询社交状态（[`api.social.getPublicSocialState`](AstrTown/convex/social.ts:131)）
+    - 对“非自己角色”渲染社交状态模块（关系徽章 + 好感度标签/可视化条）
     - 展示对话内容（[`Messages`](AstrTown/src/components/Messages.tsx:11)）
     - 若为外部控制 NPC，打开 [`NpcHistoryDrawer`](AstrTown/src/components/NpcHistoryDrawer.tsx)
 
@@ -563,26 +565,25 @@
 | 项 | 值 |
 |---|---|
 | 路径 | [`AstrTown/src/components/PlayerDetails.tsx`](AstrTown/src/components/PlayerDetails.tsx) |
-| 功能概述 | 右侧面板：玩家信息/对话控制/聊天内容/历史对话入口 |
-| 行数 | 305 行 |
-| 字符数 | 11148 chars |
+| 功能概述 | 右侧面板：玩家信息/对话控制/社交状态展示/聊天内容/历史对话入口 |
+| 行数 | 380 行 |
+| 字符数 | 13987 chars |
 
 #### 2) 导入的模块
 
 | import | 来源 | 作用 |
 |---|---|---|
-| `useQuery` | `convex/react` | 获取 userStatus、previousConversation |
-| `api` | `../../convex/_generated/api` | Convex queries |
+| `useQuery` | `convex/react` | 获取 userStatus、previousConversation、socialState |
+| `api` | `../../convex/_generated/api` | Convex queries（world/social） |
 | `Id` | `../../convex/_generated/dataModel` | 类型 |
 | `closeImg` | `../../assets/close.svg` | 关闭图标 |
 | `SelectElement` | [`./Player`](AstrTown/src/components/Player.tsx:14) | 选择回调类型 |
 | `Messages` | [`./Messages`](AstrTown/src/components/Messages.tsx:11) | 聊天显示 |
 | `toastOnError` | [`../toasts`](AstrTown/src/toasts.ts:1) | 错误处理 |
-| `useSendInput` | [`../hooks/sendInput`](AstrTown/src/hooks/sendInput.ts:1) | 发送引擎输入 |
-| `Player` | `../../convex/aiTown/player` | 类型 |
+| `useSendInput` | [`../hooks/sendInput`](AstrTown/src/hooks/sendInput.ts:1) | 发送对话控制输入 |
 | `GameId` | `../../convex/aiTown/ids` | 类型 |
 | `ServerGame` | [`../hooks/serverGame`](AstrTown/src/hooks/serverGame.ts:1) | game 结构 |
-| `useState` | `react` | drawer 开关 |
+| `useMemo, useState` | `react` | 关系徽章派生与 drawer 开关 |
 | `useTranslation` | `react-i18next` | i18n |
 | `NpcHistoryDrawer` | [`./NpcHistoryDrawer`](AstrTown/src/components/NpcHistoryDrawer.tsx:26) | NPC 历史抽屉 |
 
@@ -595,25 +596,33 @@
 #### 4) 定义的函数和变量
 
 - 选择逻辑：若当前人类玩家在对话中，则强制将 `playerId` 指向对话对方（[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:38)）。
+- 社交状态查询：`socialState = useQuery(api.social.getPublicSocialState, ...)`，参数为 `{worldId, ownerId: playerId, targetId: humanPlayer.id}`；当缺少 `humanPlayer/playerId` 时传 `'skip'`（[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:57)）。
+- 社交展示派生：
+  - `relationshipBadge`：按 `relationship.status` 规范化映射为“朋友/恋人/宿敌/默认标签”（[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:68)）。
+  - `normalizedAffinity/affinityBarLeft/affinityBarWidth/affinityBarColor`：将好感度限制到 `[-100,100]` 并换算为 0~100% 中线对齐条形可视化参数（[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:88)）。
 - 派生状态：`canInvite/sameConversation/haveInvite/waitingForAccept/waitingForNearby/inConversationWithMe`。
 - 输入发送函数：
-  - `startConversation/acceptInvite/rejectInvite/leaveConversation` via [`useSendInput`](AstrTown/src/components/PlayerDetails.tsx:58)
-  - 对应事件处理：[`onStartConversation`](AstrTown/src/components/PlayerDetails.tsx:97)、[`onAcceptInvite`](AstrTown/src/components/PlayerDetails.tsx:104)、[`onRejectInvite`](AstrTown/src/components/PlayerDetails.tsx:115)、[`onLeaveConversation`](AstrTown/src/components/PlayerDetails.tsx:126)
+  - `startConversation/acceptInvite/rejectInvite/leaveConversation` via [`useSendInput`](AstrTown/src/components/PlayerDetails.tsx:102)
+  - 对应事件处理：[`onStartConversation`](AstrTown/src/components/PlayerDetails.tsx:141)、[`onAcceptInvite`](AstrTown/src/components/PlayerDetails.tsx:148)、[`onRejectInvite`](AstrTown/src/components/PlayerDetails.tsx:159)、[`onLeaveConversation`](AstrTown/src/components/PlayerDetails.tsx:170)
 - NPC 历史开关：`npcHistoryOpen` + `openNpcHistory/closeNpcHistory`。
-- 文案映射：`activityDescriptionI18nKeyByValue` + [`translateActivityDescription`](AstrTown/src/components/PlayerDetails.tsx:151)
+- 文案映射：`activityDescriptionI18nKeyByValue` + [`translateActivityDescription`](AstrTown/src/components/PlayerDetails.tsx:195)
 
 #### 5) 文件内部关系
 
 - `Messages` 在两处使用：
   - 与选中玩家的当前对话（active）
   - previousConversation（archived）
-- 当 `isExternalControlledNpc` 为 true 时显示历史入口并渲染 [`NpcHistoryDrawer`](AstrTown/src/components/PlayerDetails.tsx:296)。
+- 社交状态模块仅在 `!isMe` 时渲染（[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:269)）：
+  - 关系徽章（`relationshipBadge`）
+  - 好感度标签（`[潜意识: ...]`）
+  - 中线分割的双向好感度条（负值向左、正值向右）
+- 当 `isExternalControlledNpc` 为 true 时显示历史入口并渲染 [`NpcHistoryDrawer`](AstrTown/src/components/PlayerDetails.tsx:370)。
 
 #### 6) 文件间关系
 
 - 被引用：[`Game`](AstrTown/src/components/Game.tsx:73)
-- 引用：对话组件与 NPC 历史子系统。
-- 架构位置：DOM UI 的“交互控制中心”（对话邀请、离开、内容展示）。
+- 引用：对话组件、NPC 历史子系统、社交查询 API（[`api.social.getPublicSocialState`](AstrTown/convex/social.ts:131)）。
+- 架构位置：DOM UI 的“交互控制中心”（对话邀请/离开 + 社交状态展示 + 内容展示）。
 
 ---
 
@@ -668,7 +677,7 @@
 
 #### 6) 文件间关系
 
-- 被引用：[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:271)、[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:285)
+- 被引用：[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:346)、[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:360)
 - 引用：[`MessageInput`](AstrTown/src/components/MessageInput.tsx:10)
 - 架构位置：DOM 对话展示层。
 
@@ -770,7 +779,7 @@
 
 #### 6) 文件间关系
 
-- 被引用：[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:296)
+- 被引用：[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:370)
 - 引用：对话历史子组件组。
 - 架构位置：历史对话子系统的“顶层容器”。
 
@@ -1446,16 +1455,23 @@
 ### 5.4 对话（邀请/接受/离开）与消息写入
 
 - 控制流：[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx)
-  - 邀请：[`onStartConversation`](AstrTown/src/components/PlayerDetails.tsx:97) → `useSendInput('startConversation')`
-  - 接受/拒绝：[`onAcceptInvite`](AstrTown/src/components/PlayerDetails.tsx:104)、[`onRejectInvite`](AstrTown/src/components/PlayerDetails.tsx:115)
-  - 离开：[`onLeaveConversation`](AstrTown/src/components/PlayerDetails.tsx:126)
+  - 邀请：[`onStartConversation`](AstrTown/src/components/PlayerDetails.tsx:141) → `useSendInput('startConversation')`
+  - 接受/拒绝：[`onAcceptInvite`](AstrTown/src/components/PlayerDetails.tsx:148)、[`onRejectInvite`](AstrTown/src/components/PlayerDetails.tsx:159)
+  - 离开：[`onLeaveConversation`](AstrTown/src/components/PlayerDetails.tsx:170)
 
 - 消息流：
   1. 展示：[`Messages`](AstrTown/src/components/Messages.tsx:31) 通过 `api.messages.listMessages` 获取并渲染。
   2. typing：[`MessageInput.onKeyDown`](AstrTown/src/components/MessageInput.tsx:30) 在非 Enter 时发送 `startTyping` 输入。
   3. 发送：Enter 时调用 `writeMessage` mutation（[`MessageInput`](AstrTown/src/components/MessageInput.tsx:68)）。
 
-### 5.5 NPC 历史数据（抽屉 → 树 → 详情）
+### 5.5 社交状态数据（PlayerDetails）
+
+1. [`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:57) 调用 [`api.social.getPublicSocialState`](AstrTown/convex/social.ts:131)，以 `ownerId=playerId`、`targetId=humanPlayer.id` 拉取公开社交状态。
+2. 使用 `useMemo` 派生 `relationshipBadge`，将关系状态归一化为朋友/恋人/宿敌/默认展示（[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:68)）。
+3. 将 `affinity.score` 限制到 `[-100,100]`，并映射为中线对齐的双向条宽与偏移（[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:88)）。
+4. 社交状态 UI 仅在 `!isMe` 时渲染（[`PlayerDetails`](AstrTown/src/components/PlayerDetails.tsx:269)）。
+
+### 5.6 NPC 历史数据（抽屉 → 树 → 详情）
 
 1. [`NpcHistoryDrawer`](AstrTown/src/components/NpcHistoryDrawer.tsx:48) 调用 `npcHistoryApi.getNpcConversationHistory`。
 2. 渲染树：[`ConversationTree`](AstrTown/src/components/NpcHistoryDrawer.tsx:98) → [`ConversationGroupItem`](AstrTown/src/components/ConversationGroupItem.tsx:33) → [`ConversationSummaryItem`](AstrTown/src/components/ConversationSummaryItem.tsx:34)
@@ -1534,7 +1550,7 @@
 | 18 | [`PixiStaticMap.tsx`](AstrTown/src/components/PixiStaticMap.tsx) | 133 | 4964 |
 | 19 | [`PixiViewport.tsx`](AstrTown/src/components/PixiViewport.tsx) | 56 | 1833 |
 | 20 | [`Player.tsx`](AstrTown/src/components/Player.tsx) | 91 | 3038 |
-| 21 | [`PlayerDetails.tsx`](AstrTown/src/components/PlayerDetails.tsx) | 305 | 11148 |
+| 21 | [`PlayerDetails.tsx`](AstrTown/src/components/PlayerDetails.tsx) | 380 | 13987 |
 | 22 | [`PositionIndicator.tsx`](AstrTown/src/components/PositionIndicator.tsx) | 26 | 836 |
 | 23 | [`PoweredByConvex.tsx`](AstrTown/src/components/PoweredByConvex.tsx) | 54 | 4444 |
 | 24 | [`buttons/Button.tsx`](AstrTown/src/components/buttons/Button.tsx) | 32 | （未在环境清单提供） |

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from urllib.parse import urlencode, urlparse
 
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
@@ -9,6 +10,11 @@ from astrbot.core.config.default import CONFIG_METADATA_2
 from astrbot.core.star.register.star_handler import register_on_llm_request
 
 from astrbot.api import logger
+
+try:
+    import aiohttp
+except Exception:  # pragma: no cover
+    aiohttp = None
 
 
 class AstrTownPlugin(Star):
@@ -45,6 +51,7 @@ class AstrTownPlugin(Star):
         kept_non_system = non_system_msgs[-max_messages:]
 
         injected_memory_context: Context | None = None
+        injected_social_context: Context | None = None
 
         if is_astrtown and kept_non_system:
             # 提取用户最新发言作为 Query
@@ -81,11 +88,116 @@ class AstrTownPlugin(Star):
                 except Exception as e:
                     logger.error(f"AstrTown: 注入记忆异常: {e}")
 
+        # 3.4 动态张力 Prompt 注入（失败静默跳过）
+        if is_astrtown:
+            try:
+                active_conversation_id = str(getattr(adapter, "_active_conversation_id", "") or "").strip()
+                owner_id = str(getattr(adapter, "_player_id", "") or "").strip()
+                world_id = str(getattr(adapter, "_world_id", "") or "").strip()
+
+                world_event = getattr(event, "world_event", None)
+                payload = world_event.get("payload") if isinstance(world_event, dict) else None
+                if isinstance(payload, dict) and not world_id:
+                    world_id = str(payload.get("worldId") or "").strip()
+
+                target_id = str(getattr(adapter, "_conversation_partner_id", "") or "").strip()
+
+                if not target_id and isinstance(payload, dict):
+                    message = payload.get("message")
+                    if isinstance(message, dict):
+                        speaker_id = str(message.get("speakerId") or "").strip()
+                        if speaker_id and speaker_id != owner_id:
+                            target_id = speaker_id
+
+                    if not target_id:
+                        other_ids = payload.get("otherParticipantIds")
+                        if isinstance(other_ids, list):
+                            for item in other_ids:
+                                participant_id = str(item or "").strip()
+                                if participant_id and participant_id != owner_id:
+                                    target_id = participant_id
+                                    break
+
+                if active_conversation_id and owner_id and target_id and aiohttp is not None:
+                    base_url = ""
+                    if hasattr(adapter, "_build_http_base_url") and callable(adapter._build_http_base_url):
+                        try:
+                            base_url = str(adapter._build_http_base_url() or "").strip().rstrip("/")
+                        except Exception:
+                            base_url = ""
+
+                    if not base_url:
+                        raw_gateway = str(getattr(adapter, "gateway_url", "") or "").strip().rstrip("/")
+                        if raw_gateway:
+                            try:
+                                parsed = urlparse(raw_gateway)
+                                if parsed.scheme == "ws":
+                                    parsed = parsed._replace(scheme="http")
+                                elif parsed.scheme == "wss":
+                                    parsed = parsed._replace(scheme="https")
+                                base_url = parsed.geturl().rstrip("/")
+                            except Exception:
+                                base_url = raw_gateway
+
+                    token = str(getattr(adapter, "token", "") or "").strip()
+                    if base_url and token:
+                        query = urlencode(
+                            {
+                                "worldId": world_id,
+                                "ownerId": owner_id,
+                                "targetId": target_id,
+                            }
+                        )
+                        url = f"{base_url}/api/bot/social/state?{query}"
+                        headers = {"Authorization": f"Bearer {token}"}
+
+                        async def _fetch_social_state() -> dict[str, Any] | None:
+                            timeout = aiohttp.ClientTimeout(total=2.0)
+                            async with aiohttp.ClientSession(timeout=timeout) as session:
+                                async with session.get(url, headers=headers) as resp:
+                                    if resp.status < 200 or resp.status >= 300:
+                                        return None
+                                    data = await resp.json()
+                                    return data if isinstance(data, dict) else None
+
+                        social_data = await asyncio.wait_for(_fetch_social_state(), timeout=2.0)
+                        if social_data:
+                            relationship = social_data.get("relationship")
+                            affinity = social_data.get("affinity")
+
+                            relationship_status = "stranger"
+                            if isinstance(relationship, dict):
+                                relationship_status = str(relationship.get("status") or "stranger").strip() or "stranger"
+
+                            affinity_score = 0
+                            affinity_label = "感觉一般"
+                            if isinstance(affinity, dict):
+                                try:
+                                    affinity_score = int(float(affinity.get("score", 0)))
+                                except (TypeError, ValueError):
+                                    affinity_score = 0
+                                affinity_label = str(affinity.get("label") or "感觉一般").strip() or "感觉一般"
+
+                            tension_text = (
+                                "【社交认知设定】你们对外界公开的客观关系是："
+                                f"[{relationship_status}]。"
+                                f"但在你的潜意识里，你对 TA 的好感度为 {affinity_score}/100，"
+                                f"你私下觉得 TA [{affinity_label}]。"
+                                "请严格遵循这一表里不一/表里如一的设定进行交互，可逢场作戏，"
+                                "但绝对不要像机器人一样读出这些数值。若好感度达标，"
+                                "可主动调用 propose_relationship 工具推进关系。"
+                            )
+                            injected_social_context = Context(role="system", content=tension_text)
+            except Exception:
+                pass
+
         # 安全拼接
         new_contexts: list[Context] = []
         new_contexts.extend(system_msgs)
         if injected_memory_context:
             new_contexts.append(injected_memory_context)
+        if injected_social_context:
+            new_contexts.append(injected_social_context)
         new_contexts.extend(kept_non_system)
 
         request.contexts = new_contexts
@@ -182,28 +294,49 @@ class AstrTownPlugin(Star):
                 logger.warning(
                     "[astrtown] context 中未找到 persona_manager；跳过人格提取"
                 )
-                return
-
-            default_persona = await persona_mgr.get_default_persona_v3()
-            prompt = None
-            try:
-                prompt = default_persona.get("prompt") if isinstance(default_persona, dict) else None
-            except Exception:
+            else:
+                default_persona = await persona_mgr.get_default_persona_v3()
                 prompt = None
+                try:
+                    prompt = default_persona.get("prompt") if isinstance(default_persona, dict) else None
+                except Exception:
+                    prompt = None
 
-            description = str(prompt or "").strip()
-            if not description:
-                logger.info("[astrtown] 默认人格提示词为空；跳过适配器注入")
-                return
+                description = str(prompt or "").strip()
+                if not description:
+                    logger.info("[astrtown] 默认人格提示词为空；跳过适配器注入")
+                else:
+                    from .adapter.astrtown_adapter import set_persona_data
 
-            from .adapter.astrtown_adapter import set_persona_data
-
-            set_persona_data(description)
-            logger.info("[astrtown] 人格描述已注入适配器")
+                    set_persona_data(description)
+                    logger.info("[astrtown] 人格描述已注入适配器")
         except Exception as e:
             logger.warning(f"[astrtown] 提取/注入人格失败: {e}")
 
+        # 阶段 3.4：注入 LLM 反思回调（供 adapter 异步反思任务使用）
+        try:
+            from .adapter.astrtown_adapter import set_reflection_llm_callback
+
+            async def _reflection_llm_callback(prompt: str):
+                provider = self.context.get_using_provider()
+                if provider is None:
+                    raise RuntimeError("当前未配置可用的 LLM Provider")
+                return await provider.text_chat(prompt=prompt)
+
+            set_reflection_llm_callback(_reflection_llm_callback)
+            logger.info("[astrtown] LLM 反思回调已注入适配器")
+        except Exception as e:
+            logger.warning(f"[astrtown] 注入 LLM 反思回调失败: {e}")
+
     async def terminate(self):
+        try:
+            from .adapter.astrtown_adapter import set_reflection_llm_callback
+
+            set_reflection_llm_callback(None)
+            logger.info("[astrtown] LLM 反思回调已清理")
+        except Exception as e:
+            logger.warning(f"[astrtown] 清理 LLM 反思回调失败: {e}")
+
         self._unregister_config()
 
     # ==================== LLM 工具 ====================
@@ -336,6 +469,30 @@ class AstrTownPlugin(Star):
         return await adapter.send_command(
             "command.leave_conversation",
             {"conversationId": conversation_id},
+        )
+
+    @filter.llm_tool(name="propose_relationship")
+    async def propose_relationship(self, event: AstrMessageEvent, target_player_id: str, status: str):
+        """向目标玩家提议建立社会关系。status 可选值：friend, lover, enemy"""
+        adapter = getattr(event, "adapter", None)
+        if adapter is None or not hasattr(adapter, "send_command"):
+            return "当前事件上AstrTown适配器不可用"
+
+        return await adapter.send_command(
+            "command.propose_relationship",
+            {"targetPlayerId": target_player_id, "status": status},
+        )
+
+    @filter.llm_tool(name="respond_relationship")
+    async def respond_relationship(self, event: AstrMessageEvent, proposer_id: str, accept: bool):
+        """回应其他玩家的关系提议。accept=True 表示接受"""
+        adapter = getattr(event, "adapter", None)
+        if adapter is None or not hasattr(adapter, "send_command"):
+            return "当前事件上AstrTown适配器不可用"
+
+        return await adapter.send_command(
+            "command.respond_relationship",
+            {"proposerId": proposer_id, "accept": bool(accept)},
         )
 
     @filter.llm_tool(name="do_something")

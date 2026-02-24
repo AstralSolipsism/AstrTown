@@ -37,6 +37,7 @@ export function classifyPriority(event: WsWorldEventBase<string, any>, hinted?: 
     return 2;
   }
   if (event.type === 'action.finished') return 2;
+  if (event.type === 'social.relationship_proposed') return 1;
   return 3;
 }
 

@@ -2,7 +2,7 @@
 
 > 范围：`AstrTown/convex/` 根目录下的轻量 TS 文件（不含子目录与生成代码）。
 >
-> 文件清单来源：任务描述中给出的 11 个文件列表。
+> 文件清单来源：当前代码读取结果（已包含新增 [`social.ts`](../AstrTown/convex/social.ts)）。
 
 ## 1. 模块概述
 
@@ -15,6 +15,7 @@ convex 根目录轻量文件模块主要承担 **Convex 后端的“入口/胶�
 - **消息读写**：对 messages 表提供查询/写入，并把“发送消息完成”作为输入推入引擎（见 [`messages.ts`](../AstrTown/convex/messages.ts)）。
 - **音乐生成与 webhook**：对 Replicate 生成音乐进行入队与 webhook 回调落库，并提供背景音乐读取（见 [`music.ts`](../AstrTown/convex/music.ts)）。
 - **NPC 对话历史查询**：基于归档表与关系边表，提供 NPC 历史对话分组与详情查询（见 [`npcHistory.ts`](../AstrTown/convex/npcHistory.ts)）。
+- **社交状态管理**：提供好感度增量更新、双人关系 upsert、社交状态查询（内部/公开）（见 [`social.ts`](../AstrTown/convex/social.ts)）。
 - **Schema 聚合**：将根目录新增表（music/messages/users/sessions/oauthAccounts/botTokens）与子模块表（agent/aiTown/engine）合并为全局 schema（见 [`schema.ts`](../AstrTown/convex/schema.ts)）。
 - **测试/运维工具函数集**：批量清库、分页删除、启动/停止/恢复引擎、调试创建玩家、随机位置、LLM embedding/completion 测试等（见 [`testing.ts`](../AstrTown/convex/testing.ts)）。
 - **世界生命周期与玩家交互**：默认世界状态、心跳、自动停机/重启、加入/离开、世界状态查询、描述查询、查找上一段对话等（见 [`world.ts`](../AstrTown/convex/world.ts)）。
@@ -34,14 +35,15 @@ convex 根目录轻量文件模块主要承担 **Convex 后端的“入口/胶�
 |---|---|---:|---:|
 | [`AstrTown/convex/constants.ts`](../AstrTown/convex/constants.ts) | 全局常量（超时、节拍、对话参数、清理策略、外控队列阈值等） | 86 | 3301 |
 | [`AstrTown/convex/crons.ts`](../AstrTown/convex/crons.ts) | Cron 注册 + vacuum 逻辑（按表分页删除旧数据） | 89 | 3037 |
-| [`AstrTown/convex/http.ts`](../AstrTown/convex/http.ts) | HTTP 路由入口：bot/auth/npc/replicate webhook 分发 | 138 | *（未在截断列表中显示 chars）* |
-| [`AstrTown/convex/init.ts`](../AstrTown/convex/init.ts) | 初始化默认世界/引擎 + 按需创建 agents 输入 | 113 | *（未在截断列表中显示 chars）* |
+| [`AstrTown/convex/http.ts`](../AstrTown/convex/http.ts) | HTTP 路由入口：bot/auth/npc/replicate webhook 分发 | 173 | 3212 |
+| [`AstrTown/convex/init.ts`](../AstrTown/convex/init.ts) | 初始化默认世界/引擎 + 按需创建 agents 输入 | 113 | 3211 |
 | [`AstrTown/convex/messages.ts`](../AstrTown/convex/messages.ts) | messages 查询/写入 + 写入后插入引擎输入 | 54 | 1661 |
 | [`AstrTown/convex/music.ts`](../AstrTown/convex/music.ts) | Replicate 音乐生成：背景音乐读取、入队、webhook 存储落库 | 135 | 4802 |
 | [`AstrTown/convex/npcHistory.ts`](../AstrTown/convex/npcHistory.ts) | NPC 对话历史：分组摘要 + 对话详情消息列表 | 230 | 7126 |
 | [`AstrTown/convex/schema.ts`](../AstrTown/convex/schema.ts) | Convex schema 聚合定义（根目录新增表 + 子模块表） | 70 | 2074 |
+| [`AstrTown/convex/social.ts`](../AstrTown/convex/social.ts) | 社交数据：好感度更新、关系 upsert、社交状态查询（内部/公开） | 168 | 4633 |
 | [`AstrTown/convex/testing.ts`](../AstrTown/convex/testing.ts) | 内部测试/运维 mutations/actions：清表、停机/恢复、调试数据 | 232 | 7532 |
-| [`AstrTown/convex/world.ts`](../AstrTown/convex/world.ts) | 世界生命周期与玩家交互：心跳、停机、重启、join/leave、state | 257 | 8333 |
+| [`AstrTown/convex/world.ts`](../AstrTown/convex/world.ts) | 世界生命周期与玩家交互：心跳、停机、重启、join/leave、state | 257 | 8149 |
 | [`AstrTown/convex/auth.ts`](../AstrTown/convex/auth.ts) | 用户鉴权：注册/登录/登出/我是谁 + session token 提取 + CORS | 425 | 12923 |
 
 ## 3. 文件详细分析
@@ -142,7 +144,7 @@ convex 根目录轻量文件模块主要承担 **Convex 后端的“入口/胶�
 - 项目内部 handler：
   - 鉴权：[`getAuthMe`](../AstrTown/convex/auth.ts:413)、[`optionsAuth`](../AstrTown/convex/auth.ts:325)、[`postAuthLogin`](../AstrTown/convex/auth.ts:358)、[`postAuthLogout`](../AstrTown/convex/auth.ts:384)、[`postAuthRegister`](../AstrTown/convex/auth.ts:329)
   - 音乐 webhook：[`handleReplicateWebhook`](../AstrTown/convex/music.ts:61)
-  - bot API（来自 [`botApi.ts`](../AstrTown/convex/botApi.ts)）：`postCommand/postCommandBatchHttp/postDescriptionUpdate/postEventAck/getWorldState/getAgentStatus/postControl/postTokenValidate/postTokenCreate`
+  - bot API（来自 [`botApi.ts`](../AstrTown/convex/botApi.ts)）：`postCommand/postCommandBatchHttp/postDescriptionUpdate/postEventAck/getWorldState/getAgentStatus/postTokenValidate/postTokenCreate/postMemorySearch/getRecentMemories/postSocialAffinity/getSocialState/postSocialRelationship/postMemoryInject`
   - npc 服务（来自 [`npcService.ts`](../AstrTown/convex/npcService.ts)）：`postNpcCreate/getNpcList/postNpcResetToken/getNpcTokenById/optionsNpc`
 
 **导出的内容**
@@ -153,7 +155,20 @@ convex 根目录轻量文件模块主要承担 **Convex 后端的“入口/胶�
 
 **文件间关系（路由 → handler）**
 - `/replicate_webhook` POST → [`handleReplicateWebhook`](../AstrTown/convex/music.ts:61)
-- `/api/bot/*` → `botApi.ts` 中对应 handler
+- `/api/bot/command` POST → [`postCommand`](../AstrTown/convex/botApi.ts:617)
+- `/api/bot/command/batch` POST → [`postCommandBatchHttp`](../AstrTown/convex/botApi.ts:480)
+- `/api/bot/description/update` POST → [`postDescriptionUpdate`](../AstrTown/convex/botApi.ts:874)
+- `/api/bot/event` POST → [`postEventAck`](../AstrTown/convex/botApi.ts:763)
+- `/api/bot/world-state` GET → [`getWorldState`](../AstrTown/convex/botApi.ts:778)
+- `/api/bot/agent-status` GET → [`getAgentStatus`](../AstrTown/convex/botApi.ts:789)
+- `/api/bot/token/validate` POST → [`postTokenValidate`](../AstrTown/convex/botApi.ts:823)
+- `/api/bot/token/create` POST → [`postTokenCreate`](../AstrTown/convex/botApi.ts:911)
+- `/api/bot/memory/search` POST → [`postMemorySearch`](../AstrTown/convex/botApi.ts:943)
+- `/api/bot/memory/recent` GET → [`getRecentMemories`](../AstrTown/convex/botApi.ts:990)
+- `/api/bot/social/affinity` POST → [`postSocialAffinity`](../AstrTown/convex/botApi.ts:1036)
+- `/api/bot/social/state` GET → [`getSocialState`](../AstrTown/convex/botApi.ts:1134)
+- `/api/bot/social/relationship` POST → [`postSocialRelationship`](../AstrTown/convex/botApi.ts:1085)
+- `/api/bot/memory/inject` POST → [`postMemoryInject`](../AstrTown/convex/botApi.ts:1165)
 - `/api/auth/*` → [`auth.ts`](../AstrTown/convex/auth.ts) 中对应 handler
 - `/api/npc/*` → `npcService.ts` 中对应 handler
 
@@ -313,7 +328,56 @@ convex 根目录轻量文件模块主要承担 **Convex 后端的“入口/胶�
 
 ---
 
-### 3.8 [`schema.ts`](../AstrTown/convex/schema.ts)
+### 3.8 [`social.ts`](../AstrTown/convex/social.ts)
+
+**文件基本信息**
+- 类型：`internalMutation/internalQuery/query`（社交数据读写）
+
+**导入的模块**
+- Convex：`v`（`convex/values`）、`internalMutation/internalQuery/query`（[`_generated/server`](../AstrTown/convex/_generated/server.d.ts)）
+
+**导出的内容**
+- [`updateAffinity`](../AstrTown/convex/social.ts:11)
+  - `internalMutation`
+  - 参数：`worldId/ownerId/targetId/scoreDelta/label`
+  - 行为：
+    - 校验 `scoreDelta` 必须是有限数值
+    - 在 `affinities` 表按 `by_owner_target` 查询单向关系
+    - 对分数做区间钳制：`[-100, 100]`
+    - 已存在则 patch `score/label`；不存在则 insert
+- [`upsertRelationship`](../AstrTown/convex/social.ts:52)
+  - `internalMutation`
+  - 参数：`worldId/playerAId/playerBId/status/establishedAt`
+  - 行为：
+    - 校验 `establishedAt` 必须是有限数值
+    - 通过 [`sortPlayerIds`](../AstrTown/convex/social.ts:4) 归一化双人顺序
+    - 在 `relationships` 表按 `by_players` upsert `status/establishedAt`
+- [`getSocialState`](../AstrTown/convex/social.ts:92)
+  - `internalQuery`
+  - 参数：`worldId/ownerId/targetId`
+  - 行为：
+    - 查 `affinities.by_owner_target`（单向）
+    - 查 `relationships.by_players`（双向，先排序）
+    - 返回 `{ affinity, relationship }`（缺失返回 `null`）
+- [`getPublicSocialState`](../AstrTown/convex/social.ts:131)
+  - `query`
+  - 参数/返回结构与 [`getSocialState`](../AstrTown/convex/social.ts:92) 一致
+
+**定义的函数/变量**
+- helper：[`sortPlayerIds`](../AstrTown/convex/social.ts:4)
+
+**文件内部关系**
+- [`sortPlayerIds`](../AstrTown/convex/social.ts:4) 被 [`upsertRelationship`](../AstrTown/convex/social.ts:52)、[`getSocialState`](../AstrTown/convex/social.ts:92)、[`getPublicSocialState`](../AstrTown/convex/social.ts:131) 复用，保证双人关系索引键顺序稳定。
+
+**文件间关系**
+- 被 [`botApi.ts`](../AstrTown/convex/botApi.ts) 的 HTTP handlers 调用：
+  - [`postSocialAffinity`](../AstrTown/convex/botApi.ts:1036) → `internal.social.updateAffinity`
+  - [`postSocialRelationship`](../AstrTown/convex/botApi.ts:1085) → `internal.social.upsertRelationship`
+  - [`getSocialState`](../AstrTown/convex/botApi.ts:1134) → `internal.social.getSocialState`
+
+---
+
+### 3.9 [`schema.ts`](../AstrTown/convex/schema.ts)
 
 **文件基本信息**
 - 类型：schema 聚合
@@ -352,7 +416,7 @@ convex 根目录轻量文件模块主要承担 **Convex 后端的“入口/胶�
 
 ---
 
-### 3.9 [`testing.ts`](../AstrTown/convex/testing.ts)
+### 3.10 [`testing.ts`](../AstrTown/convex/testing.ts)
 
 **文件基本信息**
 - 类型：内部测试/运维聚合
@@ -404,7 +468,7 @@ convex 根目录轻量文件模块主要承担 **Convex 后端的“入口/胶�
 
 ---
 
-### 3.10 [`world.ts`](../AstrTown/convex/world.ts)
+### 3.11 [`world.ts`](../AstrTown/convex/world.ts)
 
 **文件基本信息**
 - 类型：query/mutation/internalMutation（世界生命周期/状态接口）
@@ -455,7 +519,7 @@ convex 根目录轻量文件模块主要承担 **Convex 后端的“入口/胶�
 
 ---
 
-### 3.11 [`auth.ts`](../AstrTown/convex/auth.ts)
+### 3.12 [`auth.ts`](../AstrTown/convex/auth.ts)
 
 **文件基本信息**
 - 类型：query/mutation/httpAction + 鉴权工具函数
@@ -520,7 +584,8 @@ convex 根目录轻量文件模块主要承担 **Convex 后端的“入口/胶�
 - [`http.ts`](../AstrTown/convex/http.ts)
   - → [`auth.ts`](../AstrTown/convex/auth.ts)（auth 路由 handler）
   - → [`music.ts`](../AstrTown/convex/music.ts)（replicate webhook handler）
-  - → `botApi.ts`、`npcService.ts`（非本次 11 文件范围，但为根目录业务文件）
+  - → [`botApi.ts`](../AstrTown/convex/botApi.ts)（bot 路由 handler，含 memory/social/memory-inject 端点）
+  - → [`npcService.ts`](../AstrTown/convex/npcService.ts)（npc 路由 handler）
 - [`crons.ts`](../AstrTown/convex/crons.ts)
   - → [`constants.ts`](../AstrTown/convex/constants.ts)
   - → [`world.ts`](../AstrTown/convex/world.ts)（通过 `internal.world.*`）
@@ -547,6 +612,9 @@ convex 根目录轻量文件模块主要承担 **Convex 后端的“入口/胶�
   - → `aiTown/main`（start/stop/kick）
   - → `aiTown/insertInput`（join/leave）
   - → `engine/abstractGame`（engineInsertInput）
+- [`social.ts`](../AstrTown/convex/social.ts)
+  - → `affinities/relationships` 表
+  - → 被 [`botApi.ts`](../AstrTown/convex/botApi.ts) 通过 `internal.social.*` 调用
 - [`schema.ts`](../AstrTown/convex/schema.ts)
   - → `agent/schema`、`aiTown/schema`、`engine/schema`（表集合 spread）
 
@@ -651,5 +719,5 @@ convex 根目录轻量文件模块主要承担 **Convex 后端的“入口/胶�
 
 ## 特别说明/限制
 
-1. 本文“轻量文件范围”仅覆盖任务给定的 11 个文件；但其中 [`http.ts`](../AstrTown/convex/http.ts) 依赖的 `botApi.ts/npcService.ts` 属于根目录的“非轻量/更大文件”，为完整性已在关系与路由层面点名，但未展开分析。
-2. 文件清单中 [`http.ts`](../AstrTown/convex/http.ts) 与 [`init.ts`](../AstrTown/convex/init.ts) 的字符数未出现在当前截断的 workspace 文件列表中，因此表格中标注为“未显示 chars”。行数已基于读取结果给出。
+1. 本文“轻量文件范围”已更新为当前读取到的 12 个文件（新增 [`social.ts`](../AstrTown/convex/social.ts)）；其中 [`http.ts`](../AstrTown/convex/http.ts) 依赖的 [`botApi.ts`](../AstrTown/convex/botApi.ts)/[`npcService.ts`](../AstrTown/convex/npcService.ts) 仍属于根目录的“非轻量/更大文件”，为完整性已在关系与路由层面点名，但未展开分析。
+2. 文件清单字符数已按当前 workspace 文件列表更新（含 [`http.ts`](../AstrTown/convex/http.ts)、[`init.ts`](../AstrTown/convex/init.ts)、[`social.ts`](../AstrTown/convex/social.ts)）。

@@ -3,12 +3,17 @@ import { getAuthMe, optionsAuth, postAuthLogin, postAuthLogout, postAuthRegister
 import { handleReplicateWebhook } from './music';
 import {
   getAgentStatus,
+  getSocialState,
   getWorldState,
   postCommand,
   postCommandBatchHttp,
   postDescriptionUpdate,
   postEventAck,
+  postMemoryInject,
   postMemorySearch,
+  getRecentMemories,
+  postSocialAffinity,
+  postSocialRelationship,
   postTokenCreate,
   postTokenValidate,
 } from './botApi';
@@ -76,6 +81,12 @@ http.route({
 });
 
 http.route({
+  path: '/api/bot/memory/recent',
+  method: 'GET',
+  handler: getRecentMemories,
+});
+
+http.route({
   path: '/api/auth/register',
   method: 'POST',
   handler: postAuthRegister,
@@ -133,6 +144,30 @@ http.route({
   pathPrefix: '/api/npc/',
   method: 'OPTIONS',
   handler: optionsNpc,
+});
+
+http.route({
+  path: '/api/bot/social/affinity',
+  method: 'POST',
+  handler: postSocialAffinity,
+});
+
+http.route({
+  path: '/api/bot/social/state',
+  method: 'GET',
+  handler: getSocialState,
+});
+
+http.route({
+  path: '/api/bot/social/relationship',
+  method: 'POST',
+  handler: postSocialRelationship,
+});
+
+http.route({
+  path: '/api/bot/memory/inject',
+  method: 'POST',
+  handler: postMemoryInject,
 });
 
 export default http;
