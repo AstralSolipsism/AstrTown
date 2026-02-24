@@ -330,6 +330,25 @@ class AstrTownPlugin(Star):
 
     async def terminate(self):
         try:
+            platform_manager = getattr(self.context, "platform_manager", None)
+            platform_insts = getattr(platform_manager, "platform_insts", []) if platform_manager else []
+            astrtown_adapters = [
+                inst
+                for inst in platform_insts
+                if getattr(getattr(inst, "meta", lambda: None)(), "name", None) == "astrtown"
+            ]
+            for adapter in astrtown_adapters:
+                terminate_fn = getattr(adapter, "terminate", None)
+                if callable(terminate_fn):
+                    maybe_coro = terminate_fn()
+                    if asyncio.iscoroutine(maybe_coro):
+                        await maybe_coro
+            if astrtown_adapters:
+                logger.info(f"[astrtown] 已停止 {len(astrtown_adapters)} 个 astrtown 适配器实例")
+        except Exception as e:
+            logger.warning(f"[astrtown] 停止 astrtown 适配器失败: {e}")
+
+        try:
             from .adapter.astrtown_adapter import set_reflection_llm_callback
 
             set_reflection_llm_callback(None)

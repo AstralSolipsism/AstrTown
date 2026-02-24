@@ -191,9 +191,15 @@ class AstrTownAdapter(Platform):
                 fut.cancel()
         self._pending_commands.clear()
 
-        for t in self._tasks:
-            if not t.done():
-                t.cancel()
+        current_task = asyncio.current_task()
+        tasks_to_cancel = [
+            t for t in list(self._tasks) if not t.done() and t is not current_task
+        ]
+        for t in tasks_to_cancel:
+            t.cancel()
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+        self._tasks.clear()
 
         ws = self._ws
         if ws is not None:
@@ -201,6 +207,17 @@ class AstrTownAdapter(Platform):
                 await ws.close()
             except Exception:
                 pass
+
+    def _track_background_task(self, task: asyncio.Task) -> None:
+        self._tasks.append(task)
+
+        def _cleanup(done_task: asyncio.Task) -> None:
+            try:
+                self._tasks.remove(done_task)
+            except ValueError:
+                pass
+
+        task.add_done_callback(_cleanup)
 
     def get_binding(self) -> dict[str, str | int | None]:
         return {
@@ -398,6 +415,9 @@ class AstrTownAdapter(Platform):
                 self._pending_commands.clear()
 
     async def _handle_ws_message(self, data: dict[str, Any]) -> None:
+        if self._stop_event.is_set():
+            return
+
         msg_type = str(data.get("type") or "")
 
         if msg_type == "ping":
@@ -527,6 +547,9 @@ class AstrTownAdapter(Platform):
             return
 
     async def _handle_world_event(self, data: dict[str, Any]) -> None:
+        if self._stop_event.is_set():
+            return
+
         payload_raw = data.get("payload")
         metadata_raw = data.get("metadata")
         if payload_raw is None:
@@ -611,7 +634,7 @@ class AstrTownAdapter(Platform):
             messages = self._extract_conversation_messages(payload)
 
             # 关键约束：反思任务必须异步后台执行，不能阻塞事件主流程。
-            asyncio.create_task(
+            reflect_task = asyncio.create_task(
                 self._async_reflect_on_conversation(
                     conversation_id=ended_cid,
                     other_player_name=other_player_name,
@@ -620,6 +643,7 @@ class AstrTownAdapter(Platform):
                 ),
                 name=f"astrtown_reflect_{ended_cid or event_id or 'unknown'}",
             )
+            self._track_background_task(reflect_task)
 
         if event_type == "conversation.started":
             started_cid = str(payload.get("conversationId") or "").strip()
@@ -889,7 +913,7 @@ class AstrTownAdapter(Platform):
                     logger.warning(f"[AstrTown] send event ack failed for eventId={event_id}: {e}")
                 return
 
-        # 修复3：queue_refill_requested 降噪门控
+        # queue_refill 事件唤醒门控
         if event_type == "agent.queue_refill_requested":
             refill_enabled = bool(self.config.get("astrtown_refill_wake_enabled", True))
             if not refill_enabled:
@@ -898,13 +922,6 @@ class AstrTownAdapter(Platform):
                 except Exception as e:
                     logger.warning(f"[AstrTown] send event ack failed for eventId={event_id}: {e}")
                 return
-
-        # 过期事件处理：阶段 1 将过期事件包装为 action.finished success=False result.reason='expired'
-        if event_type == "action.finished":
-            result_raw = payload.get("result")
-            result = result_raw if isinstance(result_raw, dict) else {}
-            if payload.get("success") is False and result.get("reason") == "expired":
-                logger.warning(f"指令已过期被丢弃: {payload}")
 
             min_interval = self._safe_int(
                 self.config.get("astrtown_refill_min_wake_interval_sec", 30),
@@ -932,7 +949,9 @@ class AstrTownAdapter(Platform):
                 self._queue_refill_gate_skip_count += 1
                 last_state = self._queue_refill_gate_last_should_wake
                 state_changed_or_first = last_state is None or last_state is True
-                allow_throttle_log = (now - float(self._queue_refill_gate_last_log_ts or 0.0)) >= float(min_interval)
+                allow_throttle_log = (
+                    now - float(self._queue_refill_gate_last_log_ts or 0.0)
+                ) >= float(min_interval)
                 if state_changed_or_first or allow_throttle_log:
                     logger.debug(
                         f"[AstrTown] queue_refill 门控: elapsed={elapsed:.1f}s, min_interval={min_interval}s, wake=False"
@@ -942,7 +961,6 @@ class AstrTownAdapter(Platform):
                     self._queue_refill_gate_last_should_wake = False
 
             if not should_wake:
-                # 静默丢弃：只 ACK，不进 LLM
                 try:
                     await self._send_event_ack(event_id)
                 except Exception as e:
@@ -950,6 +968,13 @@ class AstrTownAdapter(Platform):
                 return
 
             self._last_refill_wake_ts = now
+
+        # 过期事件处理：阶段 1 将过期事件包装为 action.finished success=False result.reason='expired'
+        if event_type == "action.finished":
+            result_raw = payload.get("result")
+            result = result_raw if isinstance(result_raw, dict) else {}
+            if payload.get("success") is False and result.get("reason") == "expired":
+                logger.warning(f"指令已过期被丢弃: {payload}")
 
         text = self._format_event_to_text(event_type, payload)
         session_id = self._build_session_id(event_type, payload)
@@ -1309,6 +1334,9 @@ class AstrTownAdapter(Platform):
         messages: list[dict[str, str]],
     ) -> None:
         try:
+            if self._stop_event.is_set():
+                return
+
             if aiohttp is None:
                 logger.warning("[AstrTown] aiohttp not available; skip async reflection")
                 return
@@ -1404,10 +1432,12 @@ class AstrTownAdapter(Platform):
 
             self._importance_accumulator += float(importance)
             if self._importance_accumulator >= self._reflection_threshold:
-                asyncio.create_task(
-                    self._async_higher_reflection(),
-                    name=f"astrtown_higher_reflect_{owner_id or 'unknown'}",
-                )
+                if not self._stop_event.is_set():
+                    higher_reflect_task = asyncio.create_task(
+                        self._async_higher_reflection(),
+                        name=f"astrtown_higher_reflect_{owner_id or 'unknown'}",
+                    )
+                    self._track_background_task(higher_reflect_task)
                 self._importance_accumulator = 0.0
         except Exception as e:
             logger.warning(
@@ -1416,6 +1446,9 @@ class AstrTownAdapter(Platform):
 
     async def _async_higher_reflection(self) -> None:
         try:
+            if self._stop_event.is_set():
+                return
+
             if aiohttp is None:
                 logger.warning("[AstrTown] aiohttp not available; skip higher reflection")
                 return
