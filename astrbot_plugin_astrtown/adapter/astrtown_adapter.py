@@ -1825,12 +1825,40 @@ class AstrTownAdapter(Platform):
 
         if event_type == "agent.state_changed":
             pos = payload.get("position") or {}
+            nearby_players_raw = payload.get("nearbyPlayers")
+            nearby_players = nearby_players_raw if isinstance(nearby_players_raw, list) else []
+
+            formatted_nearby_players: list[str] = []
+            for item in nearby_players:
+                if not isinstance(item, dict):
+                    continue
+
+                name = str(item.get("name") or item.get("id") or "未知角色").strip() or "未知角色"
+                other_pos_raw = item.get("position")
+                other_pos = other_pos_raw if isinstance(other_pos_raw, dict) else {}
+
+                # nearbyPlayers 来自后端位置快照，这里按当前位置计算直线距离，便于外部 LLM 决策是否发起对话。
+                distance_text = ""
+                try:
+                    dx = float(other_pos.get("x")) - float(pos.get("x"))
+                    dy = float(other_pos.get("y")) - float(pos.get("y"))
+                    distance_text = f"{((dx * dx + dy * dy) ** 0.5):.2f}"
+                except (TypeError, ValueError):
+                    distance_text = ""
+
+                if distance_text:
+                    formatted_nearby_players.append(f"{name}（距离{distance_text}）")
+                else:
+                    formatted_nearby_players.append(name)
+
+            nearby_text = "、".join(formatted_nearby_players) if formatted_nearby_players else "暂无"
             return (
                 "[AstrTown] 你的状态发生变化\n"
                 f"状态：{payload.get('state')}\n"
                 f"位置：({pos.get('x')},{pos.get('y')})\n"
                 f"是否在对话中：{payload.get('inConversation')}\n"
-                f"当前活动：{payload.get('currentActivity')}"
+                f"当前活动：{payload.get('currentActivity')}\n"
+                f"附近的角色：{nearby_text}"
             )
 
         if event_type == "action.finished":
