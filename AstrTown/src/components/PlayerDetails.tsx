@@ -11,6 +11,7 @@ import { ServerGame } from '../hooks/serverGame';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import NpcHistoryDrawer from './NpcHistoryDrawer';
+import AgentEventQueueDebug from './AgentEventQueueDebug';
 
 export default function PlayerDetails({
   worldId,
@@ -265,6 +266,13 @@ export default function PlayerDetails({
             <span>{t('npcHistory.viewHistory')}</span>
           </div>
         </a>
+      )}
+      {isExternalControlledNpc && playerAgent && (
+        <AgentEventQueueDebug
+          externalEventQueue={playerAgent.externalEventQueue}
+          externalPriorityQueue={playerAgent.externalPriorityQueue}
+          externalQueueState={playerAgent.externalQueueState}
+        />
       )}
       {!isMe && (
         <div className="box mt-6">
