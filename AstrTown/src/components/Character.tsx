@@ -81,24 +81,6 @@ export const Character = ({
     }
   }, [direction, isMoving]);
 
-  if (!spriteSheet) return null;
-
-  let blockOffset = { x: 0, y: 0 };
-  switch (roundedOrientation) {
-    case 2:
-      blockOffset = { x: -20, y: 0 };
-      break;
-    case 0:
-      blockOffset = { x: 20, y: 0 };
-      break;
-    case 3:
-      blockOffset = { x: 0, y: -20 };
-      break;
-    case 1:
-      blockOffset = { x: 0, y: 20 };
-      break;
-  }
-
   const now = historicalTime ?? Date.now();
   const duration = activity ? activity.until - activity.started : 0;
   const rawProgress = activity && duration > 0 ? (now - activity.started) / duration : 0;
@@ -131,6 +113,24 @@ export const Character = ({
     },
     [activity, progress],
   );
+
+  if (!spriteSheet) return null;
+
+  let blockOffset = { x: 0, y: 0 };
+  switch (roundedOrientation) {
+    case 2:
+      blockOffset = { x: -20, y: 0 };
+      break;
+    case 0:
+      blockOffset = { x: 20, y: 0 };
+      break;
+    case 3:
+      blockOffset = { x: 0, y: -20 };
+      break;
+    case 1:
+      blockOffset = { x: 0, y: 20 };
+      break;
+  }
 
   return (
     <Container x={x} y={y} eventMode="static" pointerdown={onClick} cursor="pointer">

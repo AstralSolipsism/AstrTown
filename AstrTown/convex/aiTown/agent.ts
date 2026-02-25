@@ -176,6 +176,7 @@ export class Agent {
         description: args.activity.description,
         emoji: typeof args.activity.emoji === 'string' ? args.activity.emoji : undefined,
         until: args.activity.until,
+        started: args.activity.started ?? now,
       };
     }
     if (typeof args?.description === 'string' && typeof args?.until === 'number') {
@@ -183,6 +184,7 @@ export class Agent {
         description: args.description,
         emoji: typeof args.emoji === 'string' ? args.emoji : undefined,
         until: args.until,
+        started: now,
       };
     }
     if (typeof args?.description === 'string' && typeof args?.duration === 'number') {
@@ -190,6 +192,7 @@ export class Agent {
         description: args.description,
         emoji: typeof args.emoji === 'string' ? args.emoji : undefined,
         until: now + args.duration,
+        started: now,
       };
     }
     return undefined;
@@ -233,6 +236,7 @@ export class Agent {
       description: 'idle',
       emoji: '😴',
       until: now + EXTERNAL_QUEUE_SLEEP_WINDOW,
+      started: now,
     };
   }
 

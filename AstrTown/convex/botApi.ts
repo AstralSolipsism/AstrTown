@@ -711,7 +711,7 @@ export const postCommand = httpAction(async (ctx: ActionCtx, request: Request) =
         args: {
           operationId: crypto.randomUUID(),
           agentId: verified.binding.agentId,
-          activity: { description: 'idle', emoji: '😴', until: Date.now() + 60_000 },
+          activity: { description: 'idle', emoji: '😴', started: Date.now(), until: Date.now() + 60_000 },
         },
       });
     } else {

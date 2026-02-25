@@ -98,6 +98,7 @@ export function createDefaultCommandMapper(): CommandMapper {
         activity: {
           description: (payload as any)?.description,
           emoji: (payload as any)?.emoji,
+          started: Date.now(),
           until: Date.now() + Number((payload as any)?.duration ?? 0),
         },
       },
