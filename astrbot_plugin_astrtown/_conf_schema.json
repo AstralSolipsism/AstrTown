@@ -3,8 +3,12 @@
     "description": "邀请决策模式",
     "type": "string",
     "options": [
-      {"label": "自动接受", "value": "auto_accept"},
-      {"label": "LLM 判断", "value": "llm_judge"}
+      "auto_accept",
+      "llm_judge"
+    ],
+    "labels": [
+      "自动接受",
+      "LLM 判断"
     ],
     "default": "auto_accept",
     "hint": "收到对话邀请时的策略：auto_accept=自动接受不经LLM，llm_judge=交给LLM判断"
