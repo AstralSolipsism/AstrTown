@@ -84,3 +84,8 @@ export const EXTERNAL_QUEUE_PREFETCH_MIN_INTERVAL = 10_000; // 预取请求最�
 export const EXTERNAL_QUEUE_LEAVE_THRESHOLD = 3; // 连续预取失败次数达到此值后触发离场
 export const EXTERNAL_QUEUE_SLEEP_WINDOW = 60_000; // 休眠窗口时间(ms)
 export const EXTERNAL_QUEUE_MAX_SIZE = 50; // 队列最大容量
+
+// 漫游模式常量
+export const WANDER_DURATION = 30 * 60 * 1000; // 30 分钟漫游时长
+export const WANDER_STEP_INTERVAL = 30 * 1000; // 30 秒选择一次新目标
+export const WANDER_MAP_MARGIN = 3; // 地图边距（避免选边缘位置）

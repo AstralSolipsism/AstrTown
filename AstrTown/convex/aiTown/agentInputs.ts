@@ -50,6 +50,9 @@ export const agentInputs = {
 
       agent.externalQueueState.idle.mode = 'active';
       delete agent.externalQueueState.idle.sleepingSince;
+      delete agent.externalQueueState.idle.roamingStartedAt;
+      delete agent.externalQueueState.idle.roamingUntilAt;
+      delete agent.externalQueueState.idle.lastRoamMoveAt;
       agent.externalQueueState.idle.consecutivePrefetchMisses = 0;
       agent.externalQueueState.prefetch.waiting = false;
       agent.externalQueueState.prefetch.dispatched = false;

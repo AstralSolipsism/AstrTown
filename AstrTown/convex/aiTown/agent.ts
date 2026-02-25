@@ -14,12 +14,15 @@ import {
   EXTERNAL_QUEUE_SLEEP_WINDOW,
   INVITE_TIMEOUT,
   MIDPOINT_THRESHOLD,
+  WANDER_DURATION,
+  WANDER_MAP_MARGIN,
+  WANDER_STEP_INTERVAL,
 } from '../constants';
 import { FunctionArgs } from 'convex/server';
 import { MutationCtx } from '../_generated/server';
 import { distance } from '../util/geometry';
 import { internal } from '../_generated/api';
-import { movePlayer } from './movement';
+import { blockedWithPositions, movePlayer, stopPlayer } from './movement';
 
 export type ExternalEventItem = {
   eventId: string;
@@ -50,8 +53,11 @@ export type ExternalQueueState = {
     waiting: boolean;
   };
   idle: {
-    mode: 'active' | 'sleeping' | 'leaving';
+    mode: 'active' | 'sleeping' | 'leaving' | 'roaming';
     sleepingSince?: number;
+    roamingStartedAt?: number;
+    roamingUntilAt?: number;
+    lastRoamMoveAt?: number;
     consecutivePrefetchMisses: number;
   };
 };
@@ -86,6 +92,9 @@ function normalizeExternalQueueState(state: ExternalQueueState | undefined): Ext
     idle: {
       mode: state.idle.mode,
       sleepingSince: state.idle.sleepingSince,
+      roamingStartedAt: state.idle.roamingStartedAt,
+      roamingUntilAt: state.idle.roamingUntilAt,
+      lastRoamMoveAt: state.idle.lastRoamMoveAt,
       consecutivePrefetchMisses: state.idle.consecutivePrefetchMisses,
     },
   };
@@ -163,6 +172,9 @@ export class Agent {
     this.externalQueueState.prefetch.retries = 0;
     this.externalQueueState.idle.mode = 'active';
     delete this.externalQueueState.idle.sleepingSince;
+    delete this.externalQueueState.idle.roamingStartedAt;
+    delete this.externalQueueState.idle.roamingUntilAt;
+    delete this.externalQueueState.idle.lastRoamMoveAt;
     this.externalQueueState.idle.consecutivePrefetchMisses = 0;
   }
 
@@ -229,9 +241,47 @@ export class Agent {
     return x <= 0 || y <= 0 || x >= mapWidth - 1 || y >= mapHeight - 1;
   }
 
+  private pickRandomWanderTarget(game: Game, player: Player): { x: number; y: number } | null {
+    const { width, height } = game.worldMap;
+    if (width <= 0 || height <= 0) {
+      return null;
+    }
+
+    const maxMarginX = Math.floor((width - 1) / 2);
+    const maxMarginY = Math.floor((height - 1) / 2);
+    const margin = Math.max(0, Math.min(WANDER_MAP_MARGIN, maxMarginX, maxMarginY));
+
+    const minX = margin;
+    const maxX = width - margin - 1;
+    const minY = margin;
+    const maxY = height - margin - 1;
+    if (minX > maxX || minY > maxY) {
+      return null;
+    }
+
+    const otherPositions = [...game.world.players.values()]
+      .filter((p) => p.id !== player.id)
+      .map((p) => p.position);
+
+    const maxAttempts = 10;
+    for (let i = 0; i < maxAttempts; i++) {
+      const x = minX + Math.floor(Math.random() * (maxX - minX + 1));
+      const y = minY + Math.floor(Math.random() * (maxY - minY + 1));
+      const position = { x, y };
+      if (blockedWithPositions(position, otherPositions, game.worldMap) === null) {
+        return position;
+      }
+    }
+
+    return null;
+  }
+
   private enterSleepingMode(now: number, player: Player) {
     this.externalQueueState.idle.mode = 'sleeping';
     this.externalQueueState.idle.sleepingSince = now;
+    delete this.externalQueueState.idle.roamingStartedAt;
+    delete this.externalQueueState.idle.roamingUntilAt;
+    delete this.externalQueueState.idle.lastRoamMoveAt;
     player.activity = {
       description: 'idle',
       emoji: '😴',
@@ -243,6 +293,9 @@ export class Agent {
   private enterLeavingMode(game: Game, now: number, player: Player) {
     this.externalQueueState.idle.mode = 'leaving';
     delete this.externalQueueState.idle.sleepingSince;
+    delete this.externalQueueState.idle.roamingStartedAt;
+    delete this.externalQueueState.idle.roamingUntilAt;
+    delete this.externalQueueState.idle.lastRoamMoveAt;
     const destination = this.nearestMapEdgePoint(player, game.worldMap.width, game.worldMap.height);
     try {
       movePlayer(game, now, player, destination);
@@ -275,6 +328,64 @@ export class Agent {
       this.externalQueueState = createDefaultExternalQueueState();
     }
   }
+
+  private enterRoamingMode(game: Game, now: number, player: Player) {
+    this.externalQueueState.idle.mode = 'roaming';
+    delete this.externalQueueState.idle.sleepingSince;
+    this.externalQueueState.idle.roamingStartedAt = now;
+    this.externalQueueState.idle.roamingUntilAt = now + WANDER_DURATION;
+    this.externalQueueState.idle.lastRoamMoveAt = now;
+
+    const target = this.pickRandomWanderTarget(game, player);
+    if (!target) {
+      return;
+    }
+
+    try {
+      movePlayer(game, now, player, target);
+    } catch (error) {
+      console.warn(`[ExternalControl] Failed to start roaming path for ${this.id}`, error);
+    }
+  }
+
+  private continueRoamingMode(game: Game, now: number, player: Player) {
+    if (this.externalQueueState.idle.roamingUntilAt === undefined) {
+      this.externalQueueState.idle.roamingStartedAt ??= now;
+      this.externalQueueState.idle.roamingUntilAt = now + WANDER_DURATION;
+    }
+
+    if (now >= this.externalQueueState.idle.roamingUntilAt) {
+      this.externalQueueState.idle.mode = 'active';
+      delete this.externalQueueState.idle.roamingStartedAt;
+      delete this.externalQueueState.idle.roamingUntilAt;
+      delete this.externalQueueState.idle.lastRoamMoveAt;
+      this.externalQueueState.idle.consecutivePrefetchMisses = 0;
+      stopPlayer(player);
+      return;
+    }
+
+    if (player.pathfinding !== undefined) {
+      return;
+    }
+
+    const lastMoveAt = this.externalQueueState.idle.lastRoamMoveAt ?? 0;
+    if (now - lastMoveAt < WANDER_STEP_INTERVAL) {
+      return;
+    }
+
+    this.externalQueueState.idle.lastRoamMoveAt = now;
+    const target = this.pickRandomWanderTarget(game, player);
+    if (!target) {
+      return;
+    }
+
+    try {
+      movePlayer(game, now, player, target);
+    } catch (error) {
+      console.warn(`[ExternalControl] Failed to continue roaming path for ${this.id}`, error);
+    }
+  }
+
   private executeExternalEvent(game: Game, now: number, event: ExternalEventItem) {
     const player = game.world.players.get(this.playerId);
     if (!player) {
@@ -620,9 +731,13 @@ export class Agent {
       return;
     }
 
-    // ===== 7. 队列为空：处理 leaving / prefetch / sleeping =====
+    // ===== 7. 队列为空：处理 leaving / roaming / prefetch / sleeping =====
     if (this.externalQueueState.idle.mode === 'leaving') {
       this.continueLeavingMode(game, now, player);
+      return;
+    }
+    if (this.externalQueueState.idle.mode === 'roaming') {
+      this.continueRoamingMode(game, now, player);
       return;
     }
 
@@ -640,7 +755,7 @@ export class Agent {
         this.externalQueueState.idle.consecutivePrefetchMisses += 1;
 
         if (this.externalQueueState.idle.consecutivePrefetchMisses >= EXTERNAL_QUEUE_LEAVE_THRESHOLD) {
-          this.enterLeavingMode(game, now, player);
+          this.enterRoamingMode(game, now, player);
         } else {
           this.enterSleepingMode(now, player);
         }
@@ -728,8 +843,16 @@ export const externalQueueStateValidator = v.object({
     waiting: v.boolean(),
   }),
   idle: v.object({
-    mode: v.union(v.literal('active'), v.literal('sleeping'), v.literal('leaving')),
+    mode: v.union(
+      v.literal('active'),
+      v.literal('sleeping'),
+      v.literal('leaving'),
+      v.literal('roaming'),
+    ),
     sleepingSince: v.optional(v.number()),
+    roamingStartedAt: v.optional(v.number()),
+    roamingUntilAt: v.optional(v.number()),
+    lastRoamMoveAt: v.optional(v.number()),
     consecutivePrefetchMisses: v.number(),
   }),
 });
