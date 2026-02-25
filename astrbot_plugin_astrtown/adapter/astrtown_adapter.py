@@ -108,6 +108,12 @@ class AstrTownAdapter(Platform):
         ).rstrip("/")
         self.token = str(platform_config.get("astrtown_token", ""))
 
+        # 鉴权失败锁：收到 auth_error 后暂停自动重连，等待用户更新 token。
+        self._auth_failed: bool = False
+        self._auth_failed_token: str = ""
+        self._auth_failed_code: str | None = None
+        self._auth_failed_last_log_ts: float = 0.0
+
         # Internal hard-coded protocol details: do not expose as user config.
         self.subscribe = "*"
         self.protocol_version_range = "1-1"
@@ -333,6 +339,45 @@ class AstrTownAdapter(Platform):
     async def _ws_loop(self) -> None:
         delay = float(self.reconnect_min_delay)
         while not self._stop_event.is_set():
+            # 每轮连接前刷新 token：支持用户在运行时更新配置后自动恢复。
+            latest_token = str(self.config.get("astrtown_token", "") or "").strip()
+            if latest_token != self.token:
+                old_token = self.token
+                self.token = latest_token
+                self._auth_failed = False
+                self._auth_failed_token = ""
+                self._auth_failed_code = None
+                self._auth_failed_last_log_ts = 0.0
+                if self.token:
+                    logger.info("[AstrTown] 检测到 token 已更新，解除鉴权失败锁并重新尝试连接")
+                else:
+                    logger.warning("[AstrTown] 检测到 token 被更新为空，适配器将暂停连接")
+
+                # token 变化后重置退避，避免恢复时被长延迟阻塞。
+                delay = float(self.reconnect_min_delay)
+
+                # 仅用于诊断，避免泄露 token 内容。
+                if old_token and self.token:
+                    logger.debug("[AstrTown] token 已发生变更（内容已脱敏）")
+
+            # token 缺失时不连接，等待用户补充。
+            if not self.token:
+                await asyncio.sleep(1.0)
+                continue
+
+            # 鉴权失败锁：同一失效 token 不再重连，避免刷屏。
+            if self._auth_failed and self.token == self._auth_failed_token:
+                now = time.time()
+                if (now - float(self._auth_failed_last_log_ts or 0.0)) >= 30.0:
+                    code = self._auth_failed_code or "UNKNOWN"
+                    logger.error(
+                        f"[AstrTown] 当前 token 已鉴权失败(code={code})，暂停自动重连；"
+                        "请更新 token 后将自动恢复连接"
+                    )
+                    self._auth_failed_last_log_ts = now
+                await asyncio.sleep(1.0)
+                continue
+
             try:
                 await self._ws_connect_once()
                 delay = float(self.reconnect_min_delay)
@@ -343,6 +388,10 @@ class AstrTownAdapter(Platform):
 
             if self._stop_event.is_set():
                 return
+
+            # 鉴权失败时不走退避重连；由上面的 auth_failed 分支接管等待。
+            if self._auth_failed and self.token == self._auth_failed_token:
+                continue
 
             jitter = random.random() * 0.3 + 0.85
             sleep_s = min(delay * jitter, float(self.reconnect_max_delay))
@@ -451,6 +500,13 @@ class AstrTownAdapter(Platform):
                 "negotiatedVersion",
                 "connected",
             )
+
+            # 连接成功后清除鉴权失败锁，恢复普通重连逻辑。
+            self._auth_failed = False
+            self._auth_failed_token = ""
+            self._auth_failed_code = None
+            self._auth_failed_last_log_ts = 0.0
+
             logger.info(
                 f"[AstrTown] authenticated agentId={self._agent_id} playerId={self._player_id} worldId={self._world_id} v={self._negotiated_version}"
             )
@@ -479,11 +535,32 @@ class AstrTownAdapter(Platform):
                 timestamp=self._safe_int(data.get("timestamp", 0), 0, "timestamp", "auth_error"),
                 payload=payload,
             )
-            logger.error(f"[AstrTown] auth_error code={_msg.payload.code} message={_msg.payload.message}")
-            try:
-                await self._ws.close()
-            except Exception:
-                pass
+
+            # auth_error 代表当前 token 不可用，进入鉴权失败锁，停止同 token 重连。
+            self._auth_failed = True
+            self._auth_failed_token = str(self.token or "")
+            self._auth_failed_code = str(_msg.payload.code or "") or None
+            self._auth_failed_last_log_ts = time.time()
+
+            # 清理连接态，避免残留绑定信息污染后续逻辑。
+            self._negotiated_version = None
+            self._agent_id = None
+            self._player_id = None
+            self._world_id = None
+            self._player_name = None
+            self._active_conversation_id = None
+            self._conversation_partner_id = None
+
+            logger.error(
+                f"[AstrTown] 鉴权失败，已暂停自动重连: code={_msg.payload.code} message={_msg.payload.message}。"
+                "token 不会被修改，请在配置中更新 token 后自动恢复连接"
+            )
+            ws = self._ws
+            if ws is not None:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
             return
 
         if msg_type == "command.ack":
