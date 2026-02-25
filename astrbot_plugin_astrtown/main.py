@@ -5,7 +5,7 @@ from typing import Any
 from urllib.parse import urlencode, urlparse
 
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context, Star, register
 from astrbot.core.config.default import CONFIG_METADATA_2
 from astrbot.core.star.register.star_handler import register_on_llm_request
 
@@ -17,6 +17,7 @@ except Exception:  # pragma: no cover
     aiohttp = None
 
 
+@register("astrbot-plugin-astrtown", "AstrTown", "AstrTown 平台适配插件，通过 Gateway 让 AstrBot 控制 NPC 并接收事件", "0.1.0", "https://github.com/your-org/astrbot_plugin_astrtown")
 class AstrTownPlugin(Star):
     _registered: bool = False
 
@@ -329,25 +330,6 @@ class AstrTownPlugin(Star):
             logger.warning(f"[astrtown] 注入 LLM 反思回调失败: {e}")
 
     async def terminate(self):
-        try:
-            platform_manager = getattr(self.context, "platform_manager", None)
-            platform_insts = getattr(platform_manager, "platform_insts", []) if platform_manager else []
-            astrtown_adapters = [
-                inst
-                for inst in platform_insts
-                if getattr(getattr(inst, "meta", lambda: None)(), "name", None) == "astrtown"
-            ]
-            for adapter in astrtown_adapters:
-                terminate_fn = getattr(adapter, "terminate", None)
-                if callable(terminate_fn):
-                    maybe_coro = terminate_fn()
-                    if asyncio.iscoroutine(maybe_coro):
-                        await maybe_coro
-            if astrtown_adapters:
-                logger.info(f"[astrtown] 已停止 {len(astrtown_adapters)} 个 astrtown 适配器实例")
-        except Exception as e:
-            logger.warning(f"[astrtown] 停止 astrtown 适配器失败: {e}")
-
         try:
             from .adapter.astrtown_adapter import set_reflection_llm_callback
 
