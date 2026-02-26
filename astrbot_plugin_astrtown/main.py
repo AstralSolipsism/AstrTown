@@ -29,6 +29,21 @@ class AstrTownPlugin(Star):
         if not isinstance(contexts, list):
             return
 
+        def _msg_get(msg: Any, key: str) -> Any:
+            if isinstance(msg, dict):
+                return msg.get(key)
+            return getattr(msg, key, None)
+
+        def _msg_role(msg: Any) -> str | None:
+            role = _msg_get(msg, "role")
+            return role if isinstance(role, str) else None
+
+        def _msg_content(msg: Any) -> Any:
+            return _msg_get(msg, "content")
+
+        def _msg_tool_calls(msg: Any) -> Any:
+            return _msg_get(msg, "tool_calls")
+
         adapter = getattr(event, "adapter", None)
         is_astrtown = bool(
             adapter
@@ -47,8 +62,8 @@ class AstrTownPlugin(Star):
         max_messages = max_rounds * 2
 
         # 将原始 contexts 分离，绝不直接修改原始对象的内容
-        system_msgs = [m for m in contexts if getattr(m, "role", None) == "system"]
-        non_system_msgs = [m for m in contexts if getattr(m, "role", None) != "system"]
+        system_msgs = [m for m in contexts if _msg_role(m) == "system"]
+        non_system_msgs = [m for m in contexts if _msg_role(m) != "system"]
         kept_non_system = non_system_msgs[-max_messages:]
 
         injected_memory_context: Context | None = None
@@ -58,9 +73,9 @@ class AstrTownPlugin(Star):
             # 提取用户最新发言作为 Query
             last_user_msg = next(
                 (
-                    m.content
+                    _msg_content(m)
                     for m in reversed(kept_non_system)
-                    if getattr(m, "role", None) == "user" and isinstance(getattr(m, "content", None), str)
+                    if _msg_role(m) == "user" and isinstance(_msg_content(m), str)
                 ),
                 "",
             )
@@ -195,7 +210,7 @@ class AstrTownPlugin(Star):
                 pass
 
         # 安全拼接
-        new_contexts: list[Context] = []
+        new_contexts: list[Any] = []
         new_contexts.extend(system_msgs)
         if injected_memory_context:
             new_contexts.append(injected_memory_context)
@@ -203,22 +218,27 @@ class AstrTownPlugin(Star):
             new_contexts.append(injected_social_context)
         new_contexts.extend(kept_non_system)
 
-        repaired_contexts: list[Context] = []
+        repaired_contexts: list[Any] = []
         dropped_orphan_tool_count = 0
         for msg in new_contexts:
-            role = getattr(msg, "role", None)
+            role = _msg_role(msg)
             if role == "tool":
                 prev_msg = repaired_contexts[-1] if repaired_contexts else None
-                prev_role = getattr(prev_msg, "role", None) if prev_msg is not None else None
-                prev_tool_calls = getattr(prev_msg, "tool_calls", None) if prev_msg is not None else None
+                prev_role = _msg_role(prev_msg) if prev_msg is not None else None
+                prev_tool_calls = _msg_tool_calls(prev_msg) if prev_msg is not None else None
                 if prev_role != "assistant" or not prev_tool_calls:
                     dropped_orphan_tool_count += 1
                     continue
             repaired_contexts.append(msg)
 
-        if dropped_orphan_tool_count > 0:
-            logger.debug(
-                f"[astrtown] 上下文裁剪后移除了 {dropped_orphan_tool_count} 条孤立 tool 消息（缺少紧邻 assistant tool_calls 前驱）"
+        tool_msg_count_before = sum(1 for m in new_contexts if _msg_role(m) == "tool")
+        if tool_msg_count_before > 0 or dropped_orphan_tool_count > 0:
+            before_roles = ",".join(_msg_role(m) or "unknown" for m in new_contexts)
+            after_roles = ",".join(_msg_role(m) or "unknown" for m in repaired_contexts)
+            logger.info(
+                f"[astrtown] 孤立tool清理执行: before=[{len(new_contexts)}]{before_roles}, "
+                f"after=[{len(repaired_contexts)}]{after_roles}, "
+                f"tool_before={tool_msg_count_before}, dropped={dropped_orphan_tool_count}"
             )
 
         request.contexts = repaired_contexts
