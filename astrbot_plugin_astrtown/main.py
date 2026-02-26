@@ -203,7 +203,25 @@ class AstrTownPlugin(Star):
             new_contexts.append(injected_social_context)
         new_contexts.extend(kept_non_system)
 
-        request.contexts = new_contexts
+        repaired_contexts: list[Context] = []
+        dropped_orphan_tool_count = 0
+        for msg in new_contexts:
+            role = getattr(msg, "role", None)
+            if role == "tool":
+                prev_msg = repaired_contexts[-1] if repaired_contexts else None
+                prev_role = getattr(prev_msg, "role", None) if prev_msg is not None else None
+                prev_tool_calls = getattr(prev_msg, "tool_calls", None) if prev_msg is not None else None
+                if prev_role != "assistant" or not prev_tool_calls:
+                    dropped_orphan_tool_count += 1
+                    continue
+            repaired_contexts.append(msg)
+
+        if dropped_orphan_tool_count > 0:
+            logger.debug(
+                f"[astrtown] 上下文裁剪后移除了 {dropped_orphan_tool_count} 条孤立 tool 消息（缺少紧邻 assistant tool_calls 前驱）"
+            )
+
+        request.contexts = repaired_contexts
 
     _astrtown_items = {
         "astrtown_gateway_url": {

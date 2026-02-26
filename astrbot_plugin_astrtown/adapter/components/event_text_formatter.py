@@ -112,11 +112,16 @@ class EventTextFormatter:
         if event_type == "agent.queue_refill_requested":
             lines = [
                 "[AstrTown] 行动规划窗口：外控行动队列需要补充。",
-                "这不是普通事件通知，请你立即规划下一步行动。",
-                "可用工具：invite(targetPlayerId)、move_to(destination)、say(content)。",
-                "请结合附近角色主动发起社交互动，优先考虑接近并对话/邀请。",
+                "这不是普通事件通知，请你立即执行下一步行动。",
+                "【强制执行】你必须通过工具调用直接执行，不接受文字计划、解释或口头描述。",
+                "可用工具签名（参数名必须完全一致）：",
+                "- move_to(target_player_id)：向指定玩家移动；target_player_id 必须使用附近角色中的真实 playerId（如 p:1）。",
+                "- invite(target_player_id)：邀请指定玩家开始对话；target_player_id 必须来自附近角色列表。",
+                "- say(conversation_id, text, leave_after=False)：在已有对话中发言；仅当“是否在对话中: True”且摘要提供了对话ID时才可调用。",
+                "若当前不在对话中或没有 conversation_id，禁止调用 say。",
+                "参数来源要求：动作参数只能来自【世界状态摘要】里的真实字段，尤其是“附近角色”中的 playerId。",
                 "严禁将事件元数据字段（agentId/playerId/requestId/reason）当作动作参数。",
-                "请规划 1~3 个具体行动并按顺序填充队列。",
+                "请规划并执行 1~3 个具体行动，按顺序调用工具填充队列。",
             ]
 
             if isinstance(world_context, dict):
@@ -182,6 +187,7 @@ class EventTextFormatter:
                         f"- 自身状态：{self_ctx.get('state') or '未知'}",
                         f"- 当前活动：{self_ctx.get('currentActivity') or '未知'}",
                         f"- 是否在对话中：{bool(conversation.get('inConversation'))}",
+                        f"- 对话ID：{conversation.get('conversationId') or conversation.get('id') or '无'}",
                         f"- 对话参与者：{participants_text}",
                         f"- 附近角色：{nearby_text}",
                         f"- 队列剩余：{queue_ctx.get('remaining')}",
