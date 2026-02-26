@@ -376,47 +376,67 @@ export default function PlayerDetails({
             </h2>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3">
             {canOpenPersonality && (
               <a
-                className="button text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
+                className="button w-full text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
                 onClick={openPersonalityModal}
               >
-                <div className="h-full bg-clay-700 text-center px-3 py-1">
-                  <span>🧠 {t('playerDetails.entryButtons.personality')}</span>
+                <div className="h-full rounded-md bg-clay-700 px-2 py-2 text-center transition-colors hover:bg-brown-700 sm:px-3 sm:py-3">
+                  <span className="flex flex-col items-center justify-center gap-1">
+                    <span className="text-2xl leading-none">🧠</span>
+                    <span className="text-sm leading-tight sm:text-base">
+                      {t('playerDetails.entryButtons.personality')}
+                    </span>
+                  </span>
                 </div>
               </a>
             )}
 
             {canOpenRelationship && (
               <a
-                className="button text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
+                className="button w-full text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
                 onClick={openRelationshipModal}
               >
-                <div className="h-full bg-clay-700 text-center px-3 py-1">
-                  <span>🤝 {t('playerDetails.entryButtons.relationship')}</span>
+                <div className="h-full rounded-md bg-clay-700 px-2 py-2 text-center transition-colors hover:bg-brown-700 sm:px-3 sm:py-3">
+                  <span className="flex flex-col items-center justify-center gap-1">
+                    <span className="text-2xl leading-none">🤝</span>
+                    <span className="text-sm leading-tight sm:text-base">
+                      {t('playerDetails.entryButtons.relationship')}
+                    </span>
+                  </span>
                 </div>
               </a>
             )}
 
             {canOpenActionQueue && (
               <a
-                className="button text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
+                className="button w-full text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
                 onClick={openActionQueueModal}
               >
-                <div className="h-full bg-clay-700 text-center px-3 py-1">
-                  <span>🧩 {t('playerDetails.entryButtons.actionQueue')}</span>
+                <div className="h-full rounded-md bg-clay-700 px-2 py-2 text-center transition-colors hover:bg-brown-700 sm:px-3 sm:py-3">
+                  <span className="flex flex-col items-center justify-center gap-1">
+                    <span className="text-2xl leading-none">🧩</span>
+                    <span className="text-sm leading-tight sm:text-base">
+                      {t('playerDetails.entryButtons.actionQueue')}
+                    </span>
+                  </span>
                 </div>
               </a>
             )}
 
             {canOpenConversationHistory && (
               <a
-                className="button text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
+                className="button w-full text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
                 onClick={openNpcHistory}
               >
-                <div className="h-full bg-clay-700 text-center px-3 py-1">
-                  <span>🕘 {t('playerDetails.entryButtons.conversationHistory')}</span>
+                <div className="h-full rounded-md bg-clay-700 px-2 py-2 text-center transition-colors hover:bg-brown-700 sm:px-3 sm:py-3">
+                  <span className="flex flex-col items-center justify-center gap-1">
+                    <span className="text-2xl leading-none">🕘</span>
+                    <span className="text-sm leading-tight sm:text-base">
+                      {t('playerDetails.entryButtons.conversationHistory')}
+                    </span>
+                  </span>
                 </div>
               </a>
             )}
