@@ -11,7 +11,10 @@ import { ServerGame } from '../hooks/serverGame';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import NpcHistoryDrawer from './NpcHistoryDrawer';
-import AgentEventQueueDebug from './AgentEventQueueDebug';
+import { modalStyles } from './modalStyles';
+import PersonalityModal from './PersonalityModal';
+import RelationshipModal from './RelationshipModal';
+import ActionQueueModal from './ActionQueueModal';
 
 export default function PlayerDetails({
   worldId,
@@ -54,6 +57,9 @@ export default function PlayerDetails({
 
   const playerDescription = playerId && game.playerDescriptions.get(playerId);
   const [npcHistoryOpen, setNpcHistoryOpen] = useState(false);
+  const [personalityModalOpen, setPersonalityModalOpen] = useState(false);
+  const [relationshipModalOpen, setRelationshipModalOpen] = useState(false);
+  const [actionQueueModalOpen, setActionQueueModalOpen] = useState(false);
 
   const socialState = useQuery(
     api.social.getPublicSocialState,
@@ -182,6 +188,12 @@ export default function PlayerDetails({
 
   const openNpcHistory = () => setNpcHistoryOpen(true);
   const closeNpcHistory = () => setNpcHistoryOpen(false);
+  const openPersonalityModal = () => setPersonalityModalOpen(true);
+  const closePersonalityModal = () => setPersonalityModalOpen(false);
+  const openRelationshipModal = () => setRelationshipModalOpen(true);
+  const closeRelationshipModal = () => setRelationshipModalOpen(false);
+  const openActionQueueModal = () => setActionQueueModalOpen(true);
+  const closeActionQueueModal = () => setActionQueueModalOpen(false);
   // const pendingSuffix = (inputName: string) =>
   //   [...inflightInputs.values()].find((i) => i.name === inputName) ? ' opacity-50' : '';
 
@@ -200,6 +212,20 @@ export default function PlayerDetails({
   };
 
   const pendingSuffix = (s: string) => '';
+  const canOpenPersonality = !isMe && !!playerDescription;
+  const canOpenRelationship = !isMe;
+  const canOpenActionQueue = isExternalControlledNpc && !!playerAgent;
+  const canOpenConversationHistory = isExternalControlledNpc;
+  const hasEntryActions =
+    canOpenPersonality ||
+    canOpenRelationship ||
+    canOpenActionQueue ||
+    canOpenConversationHistory;
+  const hasKeyInfo =
+    (!playerConversation && player.activity && player.activity.until > Date.now()) ||
+    (!isMe && playerConversation && playerStatus?.kind === 'participating') ||
+    (!playerConversation && previousConversation);
+
   return (
     <>
       <div className="flex gap-4">
@@ -217,6 +243,64 @@ export default function PlayerDetails({
           </h2>
         </a>
       </div>
+
+      {hasKeyInfo && (
+        <div className="mt-6 space-y-4">
+          <div className="box flex-grow">
+            <h2 className="bg-brown-700 text-base sm:text-lg text-center">
+              {t('playerDetails.sections.keyInfo')}
+            </h2>
+          </div>
+
+          {!playerConversation && player.activity && player.activity.until > Date.now() && (
+            <div className="box flex-grow overflow-hidden">
+              <h2 className="bg-brown-700 text-base sm:text-lg text-center">
+                {t('playerDetails.sections.currentAction')}
+              </h2>
+              <div className="bg-clay-700 px-3 py-2 text-center text-white">
+                {translateActivityDescription(player.activity.description)}
+              </div>
+            </div>
+          )}
+
+          {!isMe && playerConversation && playerStatus?.kind === 'participating' && (
+            <>
+              <div className="box flex-grow">
+                <h2 className="bg-brown-700 text-base sm:text-lg text-center">
+                  {t('playerDetails.sections.currentConversation')}
+                </h2>
+              </div>
+              <Messages
+                worldId={worldId}
+                engineId={engineId}
+                inConversationWithMe={inConversationWithMe ?? false}
+                conversation={{ kind: 'active', doc: playerConversation }}
+                humanPlayer={humanPlayer}
+                scrollViewRef={scrollViewRef}
+              />
+            </>
+          )}
+
+          {!playerConversation && previousConversation && (
+            <>
+              <div className="box flex-grow">
+                <h2 className="bg-brown-700 text-base sm:text-lg text-center">
+                  {t('playerDetails.sections.recentConversation')}
+                </h2>
+              </div>
+              <Messages
+                worldId={worldId}
+                engineId={engineId}
+                inConversationWithMe={false}
+                conversation={{ kind: 'archived', doc: previousConversation }}
+                humanPlayer={humanPlayer}
+                scrollViewRef={scrollViewRef}
+              />
+            </>
+          )}
+        </div>
+      )}
+
       {canInvite && (
         <a
           className={
@@ -257,54 +341,6 @@ export default function PlayerDetails({
           </div>
         </a>
       )}
-      {isExternalControlledNpc && (
-        <a
-          className="mt-6 button text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
-          onClick={openNpcHistory}
-        >
-          <div className="h-full bg-clay-700 text-center">
-            <span>{t('npcHistory.viewHistory')}</span>
-          </div>
-        </a>
-      )}
-      {isExternalControlledNpc && playerAgent && (
-        <AgentEventQueueDebug
-          externalEventQueue={playerAgent.externalEventQueue}
-          externalPriorityQueue={playerAgent.externalPriorityQueue}
-          externalQueueState={playerAgent.externalQueueState}
-        />
-      )}
-      {!isMe && (
-        <div className="box mt-6">
-          <div className="bg-brown-700 p-3 sm:p-4 text-white">
-            <p className="font-display text-lg sm:text-xl tracking-wide">Social Status</p>
-            <div className="mt-2 inline-flex items-center rounded border border-clay-300/40 bg-clay-700 px-2 py-1 text-sm sm:text-base">
-              <span>{relationshipBadge}</span>
-            </div>
-
-            <div className="mt-4">
-              {normalizedAffinity === null ? (
-                <p className="text-sm sm:text-base">暂无情感数据</p>
-              ) : (
-                <>
-                  <p className="text-sm sm:text-base">[潜意识: {affinityLabel ?? '未知'}]</p>
-                  <div className="mt-2 h-4 w-full rounded border border-clay-300/40 bg-clay-700 relative overflow-hidden">
-                    <div className="absolute left-1/2 top-0 h-full w-px bg-clay-100/70" />
-                    <div
-                      className="absolute top-0 h-full"
-                      style={{
-                        marginLeft: `${affinityBarLeft}%`,
-                        width: `${affinityBarWidth}%`,
-                        backgroundColor: affinityBarColor,
-                      }}
-                    />
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
       {haveInvite && (
         <>
           <a
@@ -331,50 +367,92 @@ export default function PlayerDetails({
           </a>
         </>
       )}
-      {!playerConversation && player.activity && player.activity.until > Date.now() && (
-        <div className="box flex-grow mt-6">
-          <h2 className="bg-brown-700 text-base sm:text-lg text-center">
-            {translateActivityDescription(player.activity.description)}
-          </h2>
+
+      {hasEntryActions && (
+        <div className="mt-6 space-y-3">
+          <div className="box flex-grow">
+            <h2 className="bg-brown-700 text-base sm:text-lg text-center">
+              {t('playerDetails.sections.entryActions')}
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {canOpenPersonality && (
+              <a
+                className="button text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
+                onClick={openPersonalityModal}
+              >
+                <div className="h-full bg-clay-700 text-center px-3 py-1">
+                  <span>🧠 {t('playerDetails.entryButtons.personality')}</span>
+                </div>
+              </a>
+            )}
+
+            {canOpenRelationship && (
+              <a
+                className="button text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
+                onClick={openRelationshipModal}
+              >
+                <div className="h-full bg-clay-700 text-center px-3 py-1">
+                  <span>🤝 {t('playerDetails.entryButtons.relationship')}</span>
+                </div>
+              </a>
+            )}
+
+            {canOpenActionQueue && (
+              <a
+                className="button text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
+                onClick={openActionQueueModal}
+              >
+                <div className="h-full bg-clay-700 text-center px-3 py-1">
+                  <span>🧩 {t('playerDetails.entryButtons.actionQueue')}</span>
+                </div>
+              </a>
+            )}
+
+            {canOpenConversationHistory && (
+              <a
+                className="button text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
+                onClick={openNpcHistory}
+              >
+                <div className="h-full bg-clay-700 text-center px-3 py-1">
+                  <span>🕘 {t('playerDetails.entryButtons.conversationHistory')}</span>
+                </div>
+              </a>
+            )}
+          </div>
         </div>
       )}
-      <div className="desc my-6">
-        <p className="leading-tight -m-4 bg-brown-700 text-base sm:text-sm">
-          {!isMe && playerDescription?.description}
-          {isMe && <i>{t('playerDetails.thisIsYou')}</i>}
-          {!isMe && inConversationWithMe && (
-            <>
-              <br />
-              <br />(<i>{t('playerDetails.conversingWithYou')}</i>)
-            </>
-          )}
-        </p>
-      </div>
-      {!isMe && playerConversation && playerStatus?.kind === 'participating' && (
-        <Messages
-          worldId={worldId}
-          engineId={engineId}
-          inConversationWithMe={inConversationWithMe ?? false}
-          conversation={{ kind: 'active', doc: playerConversation }}
-          humanPlayer={humanPlayer}
-          scrollViewRef={scrollViewRef}
-        />
-      )}
-      {!playerConversation && previousConversation && (
-        <>
-          <div className="box flex-grow">
-            <h2 className="bg-brown-700 text-lg text-center">{t('playerDetails.previousConversation')}</h2>
-          </div>
-          <Messages
-            worldId={worldId}
-            engineId={engineId}
-            inConversationWithMe={false}
-            conversation={{ kind: 'archived', doc: previousConversation }}
-            humanPlayer={humanPlayer}
-            scrollViewRef={scrollViewRef}
-          />
-        </>
-      )}
+
+      <PersonalityModal
+        isOpen={personalityModalOpen}
+        onRequestClose={closePersonalityModal}
+        modalStyle={modalStyles}
+        playerName={playerDescription?.name}
+        personalityDescription={playerDescription?.description}
+      />
+
+      <RelationshipModal
+        isOpen={relationshipModalOpen}
+        onRequestClose={closeRelationshipModal}
+        modalStyle={modalStyles}
+        relationshipBadge={relationshipBadge}
+        affinityLabel={affinityLabel}
+        normalizedAffinity={normalizedAffinity}
+        affinityBarLeft={affinityBarLeft}
+        affinityBarWidth={affinityBarWidth}
+        affinityBarColor={affinityBarColor}
+      />
+
+      <ActionQueueModal
+        isOpen={actionQueueModalOpen}
+        onRequestClose={closeActionQueueModal}
+        modalStyle={modalStyles}
+        externalEventQueue={playerAgent?.externalEventQueue ?? []}
+        externalPriorityQueue={playerAgent?.externalPriorityQueue ?? []}
+        externalQueueState={playerAgent?.externalQueueState}
+      />
+
       {isExternalControlledNpc && player && (
         <NpcHistoryDrawer
           isOpen={npcHistoryOpen}

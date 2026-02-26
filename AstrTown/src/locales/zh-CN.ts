@@ -6,7 +6,7 @@ const zhCN = {
     myNpc: '我的 NPC',
     logout: '退出',
     login: '登录',
-    star: '星标',
+    star: 'Star',
   },
   help: {
     button: '帮助',
@@ -57,6 +57,39 @@ const zhCN = {
     thisIsYou: '这是你！',
     conversingWithYou: '正在和你对话！',
     previousConversation: '上一次对话',
+    sections: {
+      keyInfo: '关键状态',
+      currentAction: '正在执行的行为',
+      currentConversation: '正在进行的对话',
+      recentConversation: '最近一次对话',
+      entryActions: '功能入口',
+    },
+    entryButtons: {
+      personality: '人格信息',
+      relationship: '关系信息',
+      actionQueue: '行动队列',
+      conversationHistory: '对话历史',
+    },
+    personalityModal: {
+      modalLabel: '人格信息弹窗',
+      title: '人格信息',
+      empty: '暂无人格描述',
+      close: '关闭',
+    },
+    relationshipModal: {
+      modalLabel: '关系信息弹窗',
+      title: '关系信息',
+      statusTitle: '社交状态',
+      noAffinityData: '暂无情感数据',
+      affinityLabelPrefix: '潜意识',
+      affinityUnknown: '未知',
+      close: '关闭',
+    },
+    actionQueueModal: {
+      modalLabel: '行动队列弹窗',
+      title: '行动队列',
+      close: '关闭',
+    },
     activity: {
       readingBook: '正在看书',
       daydreaming: '正在发呆',
