@@ -511,6 +511,82 @@ export class Agent {
         return;
       }
       case 'do_something': {
+        const actionType = typeof event.args?.actionType === 'string' ? event.args.actionType : undefined;
+        if (actionType) {
+          switch (actionType) {
+            case 'move_to': {
+              this.executeExternalEvent(game, now, {
+                ...event,
+                kind: 'move_to',
+                args: {
+                  destination: event.args?.destination,
+                },
+              });
+              return;
+            }
+            case 'invite': {
+              this.executeExternalEvent(game, now, {
+                ...event,
+                kind: 'start_conversation',
+                args: {
+                  invitee: event.args?.invitee ?? event.args?.playerId,
+                },
+              });
+              return;
+            }
+            case 'say': {
+              this.executeExternalEvent(game, now, {
+                ...event,
+                kind: 'say',
+                args: {
+                  ...event.args,
+                  text:
+                    typeof event.args?.content === 'string'
+                      ? event.args.content
+                      : typeof event.args?.text === 'string'
+                        ? event.args.text
+                        : undefined,
+                },
+              });
+              return;
+            }
+            case 'accept_invite': {
+              this.executeExternalEvent(game, now, {
+                ...event,
+                kind: 'accept_invite',
+                args: {
+                  conversationId: event.args?.conversationId,
+                },
+              });
+              return;
+            }
+            case 'leave_conversation': {
+              this.executeExternalEvent(game, now, {
+                ...event,
+                kind: 'leave_conversation',
+                args: {
+                  conversationId: event.args?.conversationId,
+                },
+              });
+              return;
+            }
+            case 'set_activity': {
+              this.executeExternalEvent(game, now, {
+                ...event,
+                kind: 'continue_doing',
+                args: {
+                  activity: event.args?.activity,
+                },
+              });
+              return;
+            }
+            default: {
+              throw new Error(`Unknown actionType for do_something: ${actionType}`);
+            }
+          }
+        }
+
+        // 兼容旧结构：当 actionType 缺失时，沿用历史字段猜测逻辑。
         const inviteeRaw = event.args?.invitee;
         if (typeof inviteeRaw === 'string') {
           game.handleInput(now as any, 'startConversation' as any, {

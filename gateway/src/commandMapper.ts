@@ -136,7 +136,10 @@ export function createDefaultCommandMapper(): CommandMapper {
     buildRequest: (payload) => ({
       agentId: (payload as any)?.agentId,
       commandType: 'do_something',
-      args: (payload as any)?.args,
+      args: {
+        actionType: (payload as any)?.actionType,
+        ...((payload as any)?.args as Record<string, unknown>),
+      },
     }),
   });
 
