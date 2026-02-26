@@ -137,8 +137,8 @@ export function createDefaultCommandMapper(): CommandMapper {
       agentId: (payload as any)?.agentId,
       commandType: 'do_something',
       args: {
-        actionType: (payload as any)?.actionType,
         ...((payload as any)?.args as Record<string, unknown>),
+        actionType: (payload as any)?.actionType,
       },
     }),
   });

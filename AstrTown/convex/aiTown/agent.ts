@@ -529,7 +529,7 @@ export class Agent {
                 ...event,
                 kind: 'start_conversation',
                 args: {
-                  invitee: event.args?.invitee ?? event.args?.playerId,
+                  invitee: event.args?.invitee ?? event.args?.targetPlayerId,
                 },
               });
               return;
@@ -575,7 +575,7 @@ export class Agent {
                 ...event,
                 kind: 'continue_doing',
                 args: {
-                  activity: event.args?.activity,
+                  ...event.args,
                 },
               });
               return;
