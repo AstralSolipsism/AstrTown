@@ -132,11 +132,20 @@ export const setNpcNameInternal = internalMutation({
   },
 });
 
-export const createNpcWithToken = action({
+export const createNpcWithToken: any = action({
   args: {
     sessionToken: v.string(),
     name: v.string(),
     character: v.optional(v.string()),
+    traceContext: v.optional(
+      v.object({
+        source: v.optional(v.string()),
+        requestPath: v.optional(v.string()),
+        requestMethod: v.optional(v.string()),
+        userAgent: v.optional(v.string()),
+        origin: v.optional(v.string()),
+      }),
+    ),
   },
   handler: async (ctx: any, args: any) => {
     const sessionToken = args.sessionToken.trim();
@@ -147,6 +156,25 @@ export const createNpcWithToken = action({
     if (!npcName) {
       throw new Error('NPC 名称不能为空');
     }
+
+    const traceContext =
+      args.traceContext && typeof args.traceContext === 'object'
+        ? {
+            source:
+              typeof args.traceContext.source === 'string' ? args.traceContext.source : undefined,
+            requestPath:
+              typeof args.traceContext.requestPath === 'string'
+                ? args.traceContext.requestPath
+                : undefined,
+            requestMethod:
+              typeof args.traceContext.requestMethod === 'string'
+                ? args.traceContext.requestMethod
+                : undefined,
+            userAgent:
+              typeof args.traceContext.userAgent === 'string' ? args.traceContext.userAgent : undefined,
+            origin: typeof args.traceContext.origin === 'string' ? args.traceContext.origin : undefined,
+          }
+        : undefined;
 
     const user = await validateSession(ctx, sessionToken);
     if (!user) {
@@ -162,6 +190,20 @@ export const createNpcWithToken = action({
     }
 
     const descriptionIndex = resolveDescriptionIndex(args.character);
+    const description = Descriptions[descriptionIndex];
+
+    console.info('[NPC_CREATE_TRACE] begin', {
+      userId: String(user.userId),
+      username: user.username,
+      worldId: String(worldStatus.worldId),
+      npcName,
+      character: args.character,
+      descriptionIndex,
+      descriptionName: description?.name,
+      traceContext,
+      ts: Date.now(),
+    });
+
     const inputId = await ctx.runMutation((api as any).aiTown.main.sendInput, {
       worldId: worldStatus.worldId,
       name: 'createAgent',
@@ -172,9 +214,24 @@ export const createNpcWithToken = action({
 
     const status = await waitForInputStatus(ctx, inputId);
     if (!status) {
+      console.warn('[NPC_CREATE_TRACE] timeout', {
+        userId: String(user.userId),
+        worldId: String(worldStatus.worldId),
+        inputId: String(inputId),
+        traceContext,
+        ts: Date.now(),
+      });
       throw new Error('创建 NPC 超时');
     }
     if (status.kind === 'error') {
+      console.warn('[NPC_CREATE_TRACE] engine_error', {
+        userId: String(user.userId),
+        worldId: String(worldStatus.worldId),
+        inputId: String(inputId),
+        message: status.message,
+        traceContext,
+        ts: Date.now(),
+      });
       throw new Error(`创建 NPC 失败: ${status.message}`);
     }
 
@@ -214,6 +271,21 @@ export const createNpcWithToken = action({
       worldId: worldStatus.worldId,
       expiresAt: 0,
       description: `self-service npc for ${user.username}`,
+    });
+
+    console.info('[NPC_CREATE_TRACE] success', {
+      userId: String(user.userId),
+      username: user.username,
+      worldId: String(worldStatus.worldId),
+      inputId: String(inputId),
+      agentId,
+      playerId,
+      npcName,
+      character: args.character,
+      descriptionIndex,
+      descriptionName: description?.name,
+      traceContext,
+      ts: Date.now(),
     });
 
     return {
@@ -374,15 +446,40 @@ export const postNpcCreate = httpAction(async (ctx: any, request: Request) => {
     return badRequest('INVALID_ARGS', 'character must be string', request);
   }
 
+  const traceContext = {
+    source: 'http:/api/npc/create',
+    requestPath: new URL(request.url).pathname,
+    requestMethod: request.method,
+    userAgent: request.headers.get('user-agent') ?? undefined,
+    origin: request.headers.get('origin') ?? undefined,
+  };
+
+  console.info('[NPC_CREATE_TRACE] http_request', {
+    requestPath: traceContext.requestPath,
+    requestMethod: traceContext.requestMethod,
+    userAgent: traceContext.userAgent,
+    origin: traceContext.origin,
+    hasCharacter: typeof body.character === 'string' && body.character.trim().length > 0,
+    name: body.name,
+    ts: Date.now(),
+  });
+
   try {
     const result = await ctx.runAction((api as any).npcService.createNpcWithToken, {
       sessionToken,
       name: body.name,
       character: body.character,
+      traceContext,
     });
     return jsonResponse({ ok: true, ...result }, undefined, request);
   } catch (e: unknown) {
     const message = toErrorMessage(e, '创建 NPC 失败');
+    console.warn('[NPC_CREATE_TRACE] http_error', {
+      requestPath: traceContext.requestPath,
+      requestMethod: traceContext.requestMethod,
+      message,
+      ts: Date.now(),
+    });
     if (message.includes('会话无效') || message.includes('已过期')) {
       return unauthorized('AUTH_FAILED', '会话无效或已过期', request);
     }

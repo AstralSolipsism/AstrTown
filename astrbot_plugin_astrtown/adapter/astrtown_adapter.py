@@ -1840,8 +1840,8 @@ class AstrTownAdapter(Platform):
                 # nearbyPlayers 来自后端位置快照，这里按当前位置计算直线距离，便于外部 LLM 决策是否发起对话。
                 distance_text = ""
                 try:
-                    dx = float(other_pos.get("x")) - float(pos.get("x"))
-                    dy = float(other_pos.get("y")) - float(pos.get("y"))
+                    dx = float(other_pos.get("x", 0)) - float(pos.get("x", 0))
+                    dy = float(other_pos.get("y", 0)) - float(pos.get("y", 0))
                     distance_text = f"{((dx * dx + dy * dy) ** 0.5):.2f}"
                 except (TypeError, ValueError):
                     distance_text = ""

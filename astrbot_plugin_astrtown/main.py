@@ -54,7 +54,7 @@ class AstrTownPlugin(Star):
         injected_memory_context: Context | None = None
         injected_social_context: Context | None = None
 
-        if is_astrtown and kept_non_system:
+        if is_astrtown and adapter is not None and kept_non_system:
             # 提取用户最新发言作为 Query
             last_user_msg = next(
                 (
@@ -90,7 +90,7 @@ class AstrTownPlugin(Star):
                     logger.error(f"AstrTown: 注入记忆异常: {e}")
 
         # 3.4 动态张力 Prompt 注入（失败静默跳过）
-        if is_astrtown:
+        if is_astrtown and adapter is not None:
             try:
                 active_conversation_id = str(getattr(adapter, "_active_conversation_id", "") or "").strip()
                 owner_id = str(getattr(adapter, "_player_id", "") or "").strip()
@@ -120,10 +120,12 @@ class AstrTownPlugin(Star):
                                     break
 
                 if active_conversation_id and owner_id and target_id and aiohttp is not None:
+                    aiohttp_client = aiohttp
                     base_url = ""
-                    if hasattr(adapter, "_build_http_base_url") and callable(adapter._build_http_base_url):
+                    build_http_base_url = getattr(adapter, "_build_http_base_url", None)
+                    if callable(build_http_base_url):
                         try:
-                            base_url = str(adapter._build_http_base_url() or "").strip().rstrip("/")
+                            base_url = str(build_http_base_url() or "").strip().rstrip("/")
                         except Exception:
                             base_url = ""
 
@@ -153,8 +155,8 @@ class AstrTownPlugin(Star):
                         headers = {"Authorization": f"Bearer {token}"}
 
                         async def _fetch_social_state() -> dict[str, Any] | None:
-                            timeout = aiohttp.ClientTimeout(total=2.0)
-                            async with aiohttp.ClientSession(timeout=timeout) as session:
+                            timeout = aiohttp_client.ClientTimeout(total=2.0)
+                            async with aiohttp_client.ClientSession(timeout=timeout) as session:
                                 async with session.get(url, headers=headers) as resp:
                                     if resp.status < 200 or resp.status >= 300:
                                         return None
