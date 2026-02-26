@@ -139,7 +139,7 @@ export const Character = ({
           <Text
             x={0}
             y={PROGRESS_LABEL_Y}
-            scale={{ x: -0.6, y: 0.6 }}
+            scale={{ x: 0.6, y: 0.6 }}
             text={activity.description}
             anchor={{ x: 0.5, y: 0.5 }}
             style={
@@ -157,7 +157,7 @@ export const Character = ({
       )}
       {isThinking && (
         // TODO: We'll eventually have separate assets for thinking and speech animations.
-        <Text x={-20} y={-10} scale={{ x: -0.8, y: 0.8 }} text={'💭'} anchor={{ x: 0.5, y: 0.5 }} />
+        <Text x={-20} y={-10} scale={{ x: 0.8, y: 0.8 }} text={'💭'} anchor={{ x: 0.5, y: 0.5 }} />
       )}
       {isSpeaking && (
         // TODO: We'll eventually have separate assets for thinking and speech animations.
@@ -172,7 +172,7 @@ export const Character = ({
         anchor={{ x: 0.5, y: 0.5 }}
       />
       {emoji && (
-        <Text x={0} y={-24} scale={{ x: -0.8, y: 0.8 }} text={emoji} anchor={{ x: 0.5, y: 0.5 }} />
+        <Text x={0} y={-24} scale={{ x: 0.8, y: 0.8 }} text={emoji} anchor={{ x: 0.5, y: 0.5 }} />
       )}
     </Container>
   );
