@@ -36,6 +36,9 @@ class WorldEventDispatcher:
         self._text_formatter = text_formatter
         self._reflection_orch = reflection_orch
 
+        # queue_refill 门控：记录上次处理的 requestId，用于识别新请求。
+        self._last_refill_request_id: str | None = None
+
     @staticmethod
     def _safe_int(value: Any, default: int, field: str, msg_type: str) -> int:
         try:
@@ -546,23 +549,43 @@ class WorldEventDispatcher:
                 return
 
             min_interval = self._safe_int(
-                self._host.config.get("astrtown_refill_min_wake_interval_sec", 30),
-                30,
+                self._host.config.get("astrtown_refill_min_wake_interval_sec", 10),
+                10,
                 "astrtown_refill_min_wake_interval_sec",
                 "platform_config",
             )
 
             now = time.time()
             elapsed = now - float(self._host._last_refill_wake_ts or 0.0)
-            should_wake = elapsed >= float(min_interval)
+
+            request_id = str(payload.get("requestId") or "").strip()
+            reason = str(payload.get("reason") or "").strip().lower()
+            is_new_request = bool(request_id) and request_id != self._last_refill_request_id
+            is_empty_reason = reason == "empty"
+            force_wake = elapsed >= float(min_interval) * 3.0
+
+            # 三条件门控（按优先级）：
+            # 1) 新 requestId + empty：跳过间隔限制，立即唤醒。
+            # 2) 其余情况按 min_interval 节流。
+            # 3) 长时间未唤醒（>= 3 * min_interval）时强制唤醒一次。
+            if is_new_request and is_empty_reason:
+                should_wake = True
+                gate_reason = "new_empty_request"
+            elif force_wake:
+                should_wake = True
+                gate_reason = "force_after_long_idle"
+            else:
+                should_wake = elapsed >= float(min_interval)
+                gate_reason = "interval"
 
             # 方案B：当门控条件不满足时，不要每次都打印；
             # - 状态变化时打印（True<->False 或首次进入门控）
             # - 或节流：每 min_interval 秒最多打印一次，并附带累计跳过次数
             if should_wake:
-                if self._host._queue_refill_gate_skip_count > 0:
+                if self._host._queue_refill_gate_skip_count > 0 or gate_reason != "interval":
                     logger.debug(
-                        f"[AstrTown] queue_refill 门控: elapsed={elapsed:.1f}s, min_interval={min_interval}s, wake=True"
+                        f"[AstrTown] queue_refill 门控: elapsed={elapsed:.1f}s, min_interval={min_interval}s, wake=True,"
+                        f" gate={gate_reason}, requestId={request_id or '-'}, reason={reason or '-'}"
                         f" (skipped={self._host._queue_refill_gate_skip_count})"
                     )
                     self._host._queue_refill_gate_skip_count = 0
@@ -576,11 +599,15 @@ class WorldEventDispatcher:
                 ) >= float(min_interval)
                 if state_changed_or_first or allow_throttle_log:
                     logger.debug(
-                        f"[AstrTown] queue_refill 门控: elapsed={elapsed:.1f}s, min_interval={min_interval}s, wake=False"
+                        f"[AstrTown] queue_refill 门控: elapsed={elapsed:.1f}s, min_interval={min_interval}s, wake=False,"
+                        f" gate=interval, requestId={request_id or '-'}, reason={reason or '-'}"
                         f" (skipped={self._host._queue_refill_gate_skip_count})"
                     )
                     self._host._queue_refill_gate_last_log_ts = now
                     self._host._queue_refill_gate_last_should_wake = False
+
+            if request_id:
+                self._last_refill_request_id = request_id
 
             if not should_wake:
                 try:

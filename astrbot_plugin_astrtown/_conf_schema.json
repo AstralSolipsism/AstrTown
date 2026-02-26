@@ -22,7 +22,7 @@
   "astrtown_refill_min_wake_interval_sec": {
     "description": "队列补充最小唤醒间隔（秒）",
     "type": "int",
-    "default": 30,
+    "default": 10,
     "hint": "queue_refill_requested 唤醒 LLM 的最小间隔（秒）"
   },
   "astrtown_max_context_rounds": {
