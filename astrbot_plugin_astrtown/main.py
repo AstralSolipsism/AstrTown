@@ -346,7 +346,11 @@ class AstrTownPlugin(Star):
 
     @filter.llm_tool(name="recall_past_memory")
     async def recall_past_memory(self, event: AstrMessageEvent, search_keyword: str):
-        """当你需要努力回想关于某人、某事或过去的约定，但上下文中缺乏线索时，调用此工具深度搜索长期记忆。"""
+        """当你需要努力回想关于某人、某事或过去的约定，但上下文中缺乏线索时，调用此工具深度搜索长期记忆。
+
+        Args:
+            search_keyword(string): 用于搜索长期记忆的关键词，如人名、事件名、地点等
+        """
 
         adapter = getattr(event, "adapter", None)
         if (
