@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from math import sqrt
 from typing import Any
 
 from astrbot import logger
@@ -42,6 +43,119 @@ class WorldEventDispatcher:
         except (TypeError, ValueError):
             logger.warning(f"[AstrTown] invalid {field} for {msg_type}: {value!r}, using {default}")
             return default
+
+    @staticmethod
+    def _to_float(value: Any) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _distance_sort_key(item: dict[str, Any]) -> float:
+        distance = item.get("distance")
+        if isinstance(distance, (int, float)):
+            return float(distance)
+        return float("inf")
+
+    @staticmethod
+    def _build_position_dict(raw: Any) -> dict[str, Any]:
+        if not isinstance(raw, dict):
+            return {}
+        result: dict[str, Any] = {
+            "x": raw.get("x"),
+            "y": raw.get("y"),
+        }
+
+        # 兼容不同后端字段命名，尽量提取区域信息用于提示词。
+        area_name = raw.get("areaName")
+        if not area_name:
+            area_name = raw.get("area")
+        if not area_name:
+            area_name = raw.get("region")
+        if not area_name:
+            area_name = raw.get("regionName")
+        if isinstance(area_name, str) and area_name.strip():
+            result["areaName"] = area_name.strip()
+
+        return result
+
+    def _build_queue_refill_world_context(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # 优先使用最近一次状态事件快照；无快照时保守降级，仅提供队列信息。
+        snapshot_raw = getattr(self._host, "_latest_state_snapshot", None)
+        snapshot = snapshot_raw if isinstance(snapshot_raw, dict) else {}
+
+        position = self._build_position_dict(snapshot.get("position"))
+        self_x = self._to_float(position.get("x"))
+        self_y = self._to_float(position.get("y"))
+
+        nearby_raw = snapshot.get("nearbyPlayers")
+        nearby_players = nearby_raw if isinstance(nearby_raw, list) else []
+        nearby_items: list[dict[str, Any]] = []
+        for item in nearby_players:
+            if not isinstance(item, dict):
+                continue
+            player_id = str(item.get("id") or item.get("playerId") or "").strip()
+            if not player_id:
+                continue
+            name = str(item.get("name") or player_id).strip() or player_id
+            other_pos = self._build_position_dict(item.get("position"))
+
+            distance = None
+            other_x = self._to_float(other_pos.get("x"))
+            other_y = self._to_float(other_pos.get("y"))
+            if self_x is not None and self_y is not None and other_x is not None and other_y is not None:
+                distance = sqrt((other_x - self_x) ** 2 + (other_y - self_y) ** 2)
+
+            nearby_items.append(
+                {
+                    "playerId": player_id,
+                    "name": name,
+                    "position": other_pos,
+                    "distance": distance,
+                }
+            )
+
+        nearby_items.sort(key=self._distance_sort_key)
+
+        now_ms = int(time.time() * 1000)
+        last_dequeued_raw = payload.get("lastDequeuedAt")
+        last_dequeued_ago_sec = None
+        if isinstance(last_dequeued_raw, (int, float)):
+            # Convex 侧 now 来自 Date.now()，这里按 ms 口径计算时间差。
+            last_dequeued_ago_sec = max(0.0, (now_ms - float(last_dequeued_raw)) / 1000.0)
+
+        in_conversation = bool(self._host._active_conversation_id)
+        snapshot_in_conversation = snapshot.get("inConversation")
+        if isinstance(snapshot_in_conversation, bool):
+            in_conversation = in_conversation or snapshot_in_conversation
+        participants: list[str] = []
+        owner_id = str(self._host._player_id or "").strip()
+        if owner_id:
+            participants.append(owner_id)
+        partner_id = str(self._host._conversation_partner_id or "").strip()
+        if partner_id and partner_id not in participants:
+            participants.append(partner_id)
+
+        world_context = {
+            "self": {
+                "state": snapshot.get("state"),
+                "currentActivity": snapshot.get("currentActivity"),
+                "position": position,
+            },
+            "conversation": {
+                "inConversation": in_conversation,
+                "participants": participants,
+            },
+            "nearbyPlayers": nearby_items[:5],
+            "queue": {
+                "remaining": payload.get("remaining"),
+                "lastDequeuedAt": last_dequeued_raw,
+                "lastDequeuedAgoSec": last_dequeued_ago_sec,
+                "nowTimestamp": now_ms,
+            },
+        }
+        return world_context
 
     async def handle_world_event(self, data: dict[str, Any]) -> None:
         if self._host._stop_event.is_set():
@@ -94,6 +208,17 @@ class WorldEventDispatcher:
             owner_id = str(self._host._player_id or "").strip()
             if speaker_id and speaker_id != owner_id:
                 self._host._conversation_partner_id = speaker_id
+
+        # 维护最近一次 agent.state_changed 快照，供 queue_refill 提示词注入世界状态使用。
+        if event_type == "agent.state_changed":
+            self._host._latest_state_snapshot = {
+                "state": payload.get("state"),
+                "position": self._build_position_dict(payload.get("position")),
+                "nearbyPlayers": payload.get("nearbyPlayers") if isinstance(payload.get("nearbyPlayers"), list) else [],
+                "inConversation": payload.get("inConversation"),
+                "currentActivity": payload.get("currentActivity"),
+                "updatedAt": int(time.time() * 1000),
+            }
 
         # 方案C：活跃对话状态更新（invited/started/ended/timeout）
         if event_type == "conversation.ended":
@@ -473,7 +598,16 @@ class WorldEventDispatcher:
             if payload.get("success") is False and result.get("reason") == "expired":
                 logger.warning(f"指令已过期被丢弃: {payload}")
 
-        text = self._text_formatter.format_event_to_text(event_type, payload)
+        world_context: dict[str, Any] | None = None
+        if event_type == "agent.queue_refill_requested":
+            try:
+                world_context = self._build_queue_refill_world_context(payload)
+            except Exception as e:
+                # 世界状态注入失败时降级，仍保持 queue_refill 专用提示词分支。
+                logger.warning(f"[AstrTown] 构建 queue_refill 世界状态摘要失败: {e}")
+                world_context = None
+
+        text = self._text_formatter.format_event_to_text(event_type, payload, world_context)
         session_id = self._session_ctx.build_session_id(event_type, payload)
 
         # 方案C：adapter 侧兜底计数器

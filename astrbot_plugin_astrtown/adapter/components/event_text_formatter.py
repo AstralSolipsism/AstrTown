@@ -12,7 +12,12 @@ class EventTextFormatter:
     def __init__(self, host: AdapterHostProtocol) -> None:
         self._host = host
 
-    def format_event_to_text(self, event_type: str, payload: dict[str, Any]) -> str:
+    def format_event_to_text(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        world_context: dict[str, Any] | None = None,
+    ) -> str:
         if event_type == "conversation.message":
             message_raw = payload.get("message")
             message = message_raw if isinstance(message_raw, dict) else {}
@@ -103,6 +108,88 @@ class EventTextFormatter:
                 f"当前活动：{payload.get('currentActivity')}\n"
                 f"附近的角色：{nearby_text}"
             )
+
+        if event_type == "agent.queue_refill_requested":
+            lines = [
+                "[AstrTown] 行动规划窗口：外控行动队列需要补充。",
+                "这不是普通事件通知，请你立即规划下一步行动。",
+                "可用工具：invite(targetPlayerId)、move_to(destination)、say(content)。",
+                "请结合附近角色主动发起社交互动，优先考虑接近并对话/邀请。",
+                "严禁将事件元数据字段（agentId/playerId/requestId/reason）当作动作参数。",
+                "请规划 1~3 个具体行动并按顺序填充队列。",
+            ]
+
+            if isinstance(world_context, dict):
+                self_ctx_raw = world_context.get("self")
+                self_ctx = self_ctx_raw if isinstance(self_ctx_raw, dict) else {}
+                pos_raw = self_ctx.get("position")
+                pos = pos_raw if isinstance(pos_raw, dict) else {}
+
+                conversation_raw = world_context.get("conversation")
+                conversation = conversation_raw if isinstance(conversation_raw, dict) else {}
+                participants_raw = conversation.get("participants")
+                participants = participants_raw if isinstance(participants_raw, list) else []
+
+                queue_raw = world_context.get("queue")
+                queue_ctx = queue_raw if isinstance(queue_raw, dict) else {}
+
+                nearby_raw = world_context.get("nearbyPlayers")
+                nearby = nearby_raw if isinstance(nearby_raw, list) else []
+
+                x = pos.get("x")
+                y = pos.get("y")
+                area_name = pos.get("areaName")
+                position_text = "未知"
+                if x is not None or y is not None:
+                    position_text = f"({x},{y})"
+                if isinstance(area_name, str) and area_name.strip():
+                    position_text += f" / 区域：{area_name.strip()}"
+
+                participants_text = "、".join(str(x) for x in participants if str(x).strip()) or "无"
+
+                nearby_text_parts: list[str] = []
+                for item in nearby:
+                    if not isinstance(item, dict):
+                        continue
+                    player_id = str(item.get("playerId") or "").strip() or "未知ID"
+                    name = str(item.get("name") or player_id).strip() or player_id
+                    item_pos_raw = item.get("position")
+                    item_pos = item_pos_raw if isinstance(item_pos_raw, dict) else {}
+                    distance = item.get("distance")
+
+                    item_pos_text = "未知"
+                    if item_pos.get("x") is not None or item_pos.get("y") is not None:
+                        item_pos_text = f"({item_pos.get('x')},{item_pos.get('y')})"
+
+                    distance_text = ""
+                    if isinstance(distance, (int, float)):
+                        distance_text = f"，距离≈{distance:.2f}"
+
+                    nearby_text_parts.append(f"{name}[{player_id}]@{item_pos_text}{distance_text}")
+
+                nearby_text = "；".join(nearby_text_parts) if nearby_text_parts else "暂无"
+
+                last_dequeued_ago = queue_ctx.get("lastDequeuedAgoSec")
+                if isinstance(last_dequeued_ago, (int, float)):
+                    last_dequeued_ago_text = f"{last_dequeued_ago:.1f}s"
+                else:
+                    last_dequeued_ago_text = "未知"
+
+                lines.extend(
+                    [
+                        "【世界状态摘要】",
+                        f"- 自身位置：{position_text}",
+                        f"- 自身状态：{self_ctx.get('state') or '未知'}",
+                        f"- 当前活动：{self_ctx.get('currentActivity') or '未知'}",
+                        f"- 是否在对话中：{bool(conversation.get('inConversation'))}",
+                        f"- 对话参与者：{participants_text}",
+                        f"- 附近角色：{nearby_text}",
+                        f"- 队列剩余：{queue_ctx.get('remaining')}",
+                        f"- 上次出队距今：{last_dequeued_ago_text}",
+                    ]
+                )
+
+            return "\n".join(lines)
 
         if event_type == "action.finished":
             return (
