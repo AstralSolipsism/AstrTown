@@ -601,13 +601,16 @@ class AstrTownPlugin(Star):
         payload = {"actionType": action_type, "args": args or {}}
         return await adapter.send_command("command.do_something", payload)
 
-    @filter.regex(r"^/astrtown\s*(.*)$")
+    @filter.command("astrtown")
     async def astrtown_user_command(self, event: AstrMessageEvent):
         msg = str(event.get_message_str() or "").strip()
-        if not msg.startswith("/astrtown"):
-            return
 
-        suffix = msg[len("/astrtown") :].strip()
+        if msg.startswith("/astrtown"):
+            suffix = msg[len("/astrtown") :].strip()
+        elif msg == "astrtown" or msg.startswith("astrtown "):
+            suffix = msg[len("astrtown") :].strip()
+        else:
+            return
         if not suffix:
             reply = await self.user_cmd_handler.handle_help(event)
             event.set_result(MessageEventResult().message(reply).stop_event())
