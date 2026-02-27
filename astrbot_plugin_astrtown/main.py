@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
-from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.event import AstrMessageEvent, MessageEventResult, filter
 from astrbot.api.star import Context, Star, register
 from astrbot.core.config.default import CONFIG_METADATA_2
 from astrbot.core.star.register.star_handler import register_on_llm_request
+from astrbot.core.star.star_tools import StarTools
 
 from astrbot.api import logger
+
+from .adapter.astrtown_event import AstrTownMessageEvent
+from .adapter.components.memory_injector import MemoryInjector
+from .adapter.components.player_binding import PlayerBindingManager
+from .adapter.components.user_command_handler import UserCommandHandler
 
 try:
     import aiohttp
@@ -24,6 +31,24 @@ class AstrTownPlugin(Star):
     @register_on_llm_request(priority=100)
     async def _astrtown_trim_context_and_inject_memory(self, event: AstrMessageEvent, request) -> None:
         """在 LLM 请求前裁剪上下文，并以“阅后即焚”的方式注入相关世界记忆。"""
+
+        adapter = getattr(event, "adapter", None)
+        is_astrtown_event = isinstance(event, AstrTownMessageEvent)
+        is_astrtown_adapter = bool(
+            adapter
+            and getattr(adapter, "meta", None)
+            and getattr(adapter.meta(), "name", None) == "astrtown"
+        )
+        is_astrtown = is_astrtown_event or is_astrtown_adapter
+
+        # P0：AstrTown 事件禁止使用 AstrBot Cron 工具，避免行动规划泄露到 future task。
+        if is_astrtown:
+            func_tool = getattr(request, "func_tool", None)
+            remove_tool = getattr(func_tool, "remove_tool", None)
+            if callable(remove_tool):
+                remove_tool("create_future_task")
+                remove_tool("delete_future_task")
+                remove_tool("list_future_tasks")
 
         contexts = getattr(request, "contexts", None)
         if not isinstance(contexts, list):
@@ -44,13 +69,6 @@ class AstrTownPlugin(Star):
         def _msg_tool_calls(msg: Any) -> Any:
             return _msg_get(msg, "tool_calls")
 
-        adapter = getattr(event, "adapter", None)
-        is_astrtown = bool(
-            adapter
-            and getattr(adapter, "meta", None)
-            and getattr(adapter.meta(), "name", None) == "astrtown"
-        )
-
         try:
             max_rounds = int(self.config.get("astrtown_max_context_rounds", 50) or 50)
         except (TypeError, ValueError):
@@ -67,6 +85,7 @@ class AstrTownPlugin(Star):
         kept_non_system = non_system_msgs[-max_messages:]
 
         injected_memory_context: Context | None = None
+        injected_bound_memory_context: dict[str, str] | None = None
         injected_social_context: Context | None = None
 
         if is_astrtown and adapter is not None and kept_non_system:
@@ -103,6 +122,17 @@ class AstrTownPlugin(Star):
                     logger.warning("AstrTown: 记忆检索超时(>2s)，已降级为无记忆普通回复。")
                 except Exception as e:
                     logger.error(f"AstrTown: 注入记忆异常: {e}")
+
+        if (not is_astrtown) and kept_non_system:
+            try:
+                bound_memory_text = await self.memory_injector.build_memory_prompt(event, kept_non_system)
+                if bound_memory_text:
+                    injected_bound_memory_context = {
+                        "role": "system",
+                        "content": bound_memory_text,
+                    }
+            except Exception as e:
+                logger.warning(f"[astrtown] 普通对话记忆注入失败，已跳过: {e}")
 
         # 3.4 动态张力 Prompt 注入（失败静默跳过）
         if is_astrtown and adapter is not None:
@@ -214,6 +244,8 @@ class AstrTownPlugin(Star):
         new_contexts.extend(system_msgs)
         if injected_memory_context:
             new_contexts.append(injected_memory_context)
+        if injected_bound_memory_context:
+            new_contexts.append(injected_bound_memory_context)
         if injected_social_context:
             new_contexts.append(injected_social_context)
         new_contexts.extend(kept_non_system)
@@ -271,8 +303,20 @@ class AstrTownPlugin(Star):
         super().__init__(context, config)
         self.config = config
         self._injected_config_keys: set[str] = set()
+        data_dir = StarTools.get_data_dir()
+        data_path = Path(data_dir) / "player_bindings.json"
+        self.player_binding = PlayerBindingManager(str(data_path))
+
+        platform_manager = getattr(self.context, "platform_manager", None)
+        platform_insts = getattr(platform_manager, "platform_insts", None)
+        adapter_list = platform_insts if isinstance(platform_insts, list) else []
+        self.memory_injector = MemoryInjector(adapter_list=adapter_list, player_binding=self.player_binding)
+
         # 导入适配器以通过装饰器注册
         from .adapter.astrtown_adapter import AstrTownAdapter  # noqa: F401
+
+        self.user_cmd_handler = UserCommandHandler(adapter=None, player_binding=self.player_binding)
+        self.user_cmd_handler.set_context(self.context)
 
     def _register_config(self):
         if self._registered:
@@ -556,3 +600,52 @@ class AstrTownPlugin(Star):
 
         payload = {"actionType": action_type, "args": args or {}}
         return await adapter.send_command("command.do_something", payload)
+
+    @filter.regex(r"^/astrtown\s*(.*)$")
+    async def astrtown_user_command(self, event: AstrMessageEvent):
+        msg = str(event.get_message_str() or "").strip()
+        if not msg.startswith("/astrtown"):
+            return
+
+        suffix = msg[len("/astrtown") :].strip()
+        if not suffix:
+            reply = await self.user_cmd_handler.handle_help(event)
+            event.set_result(MessageEventResult().message(reply).stop_event())
+            return
+
+        parts = suffix.split()
+        sub = parts[0].lower()
+
+        if sub == "help":
+            reply = await self.user_cmd_handler.handle_help(event)
+        elif sub == "bind":
+            if len(parts) < 2:
+                reply = "参数错误：请使用 /astrtown bind <角色ID>。"
+            else:
+                reply = await self.user_cmd_handler.handle_bind(event, parts[1])
+        elif sub == "unbind":
+            reply = await self.user_cmd_handler.handle_unbind(event)
+        elif sub == "whoami":
+            reply = await self.user_cmd_handler.handle_whoami(event)
+        elif sub == "status":
+            reply = await self.user_cmd_handler.handle_status(event)
+        elif sub == "nearby":
+            reply = await self.user_cmd_handler.handle_nearby(event)
+        elif sub == "relations":
+            reply = await self.user_cmd_handler.handle_relations(event)
+        elif sub == "do":
+            action = suffix[len(parts[0]) :].strip()
+            reply = await self.user_cmd_handler.handle_do(event, action)
+        elif sub == "talk":
+            if len(parts) < 3:
+                reply = "参数错误：请使用 /astrtown talk <目标角色ID> <内容>。"
+            else:
+                target = parts[1]
+                content = suffix[len(parts[0]) + len(parts[1]) + 2 :].strip()
+                reply = await self.user_cmd_handler.handle_talk(event, target, content)
+        elif sub == "cancel":
+            reply = await self.user_cmd_handler.handle_cancel(event)
+        else:
+            reply = "未知子命令。请使用 /astrtown help 查看可用指令。"
+
+        event.set_result(MessageEventResult().message(reply).stop_event())
