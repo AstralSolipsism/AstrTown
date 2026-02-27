@@ -213,6 +213,7 @@ class WorldEventDispatcher:
                 self._host._conversation_partner_id = speaker_id
 
         # 维护最近一次 agent.state_changed 快照，供 queue_refill 提示词注入世界状态使用。
+        # 该事件仅用于状态同步，不应触发 LLM：更新快照后仅 ACK 并返回。
         if event_type == "agent.state_changed":
             self._host._latest_state_snapshot = {
                 "state": payload.get("state"),
@@ -222,6 +223,14 @@ class WorldEventDispatcher:
                 "currentActivity": payload.get("currentActivity"),
                 "updatedAt": int(time.time() * 1000),
             }
+            logger.debug(
+                f"[AstrTown] state_changed 仅更新快照，不唤醒 LLM: eventId={event_id}, agentId={self._host._agent_id}"
+            )
+            try:
+                await self._ack_sender.send_event_ack(event_id)
+            except Exception as e:
+                logger.warning(f"[AstrTown] send event ack failed for eventId={event_id}: {e}")
+            return
 
         # 方案C：活跃对话状态更新（invited/started/ended/timeout）
         if event_type == "conversation.ended":
@@ -565,15 +574,15 @@ class WorldEventDispatcher:
             force_wake = elapsed >= float(min_interval) * 3.0
 
             # 三条件门控（按优先级）：
-            # 1) 新 requestId + empty：跳过间隔限制，立即唤醒。
-            # 2) 其余情况按 min_interval 节流。
-            # 3) 长时间未唤醒（>= 3 * min_interval）时强制唤醒一次。
-            if is_new_request and is_empty_reason:
-                should_wake = True
-                gate_reason = "new_empty_request"
-            elif force_wake:
+            # 1) 长时间未唤醒（>= 3 * min_interval）时强制唤醒一次。
+            # 2) 新 requestId + empty：也受 min_interval 约束，避免高频连续唤醒。
+            # 3) 其余情况按 min_interval 节流。
+            if force_wake:
                 should_wake = True
                 gate_reason = "force_after_long_idle"
+            elif is_new_request and is_empty_reason:
+                should_wake = elapsed >= float(min_interval)
+                gate_reason = "new_empty_request" if should_wake else "new_empty_request_throttled"
             else:
                 should_wake = elapsed >= float(min_interval)
                 gate_reason = "interval"
@@ -600,7 +609,7 @@ class WorldEventDispatcher:
                 if state_changed_or_first or allow_throttle_log:
                     logger.debug(
                         f"[AstrTown] queue_refill 门控: elapsed={elapsed:.1f}s, min_interval={min_interval}s, wake=False,"
-                        f" gate=interval, requestId={request_id or '-'}, reason={reason or '-'}"
+                        f" gate={gate_reason}, requestId={request_id or '-'}, reason={reason or '-'}"
                         f" (skipped={self._host._queue_refill_gate_skip_count})"
                     )
                     self._host._queue_refill_gate_last_log_ts = now
@@ -618,12 +627,18 @@ class WorldEventDispatcher:
 
             self._host._last_refill_wake_ts = now
 
-        # 过期事件处理：阶段 1 将过期事件包装为 action.finished success=False result.reason='expired'
+        # action.finished 仅用于状态记录，不应触发 LLM 唤醒。
         if event_type == "action.finished":
             result_raw = payload.get("result")
             result = result_raw if isinstance(result_raw, dict) else {}
             if payload.get("success") is False and result.get("reason") == "expired":
                 logger.warning(f"指令已过期被丢弃: {payload}")
+
+            try:
+                await self._ack_sender.send_event_ack(event_id)
+            except Exception as e:
+                logger.warning(f"[AstrTown] send event ack failed for eventId={event_id}: {e}")
+            return
 
         world_context: dict[str, Any] | None = None
         if event_type == "agent.queue_refill_requested":
