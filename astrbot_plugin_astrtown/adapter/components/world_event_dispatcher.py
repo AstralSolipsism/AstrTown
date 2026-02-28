@@ -84,15 +84,19 @@ class WorldEventDispatcher:
         return result
 
     def _build_queue_refill_world_context(self, payload: dict[str, Any]) -> dict[str, Any]:
-        # 优先使用最近一次状态事件快照；无快照时保守降级，仅提供队列信息。
+        # 优先使用 queue_refill 事件 payload；缺失时回退到最近一次 state_changed 快照。
         snapshot_raw = getattr(self._host, "_latest_state_snapshot", None)
         snapshot = snapshot_raw if isinstance(snapshot_raw, dict) else {}
 
-        position = self._build_position_dict(snapshot.get("position"))
+        position = self._build_position_dict(payload.get("position"))
+        if not position:
+            position = self._build_position_dict(snapshot.get("position"))
         self_x = self._to_float(position.get("x"))
         self_y = self._to_float(position.get("y"))
 
-        nearby_raw = snapshot.get("nearbyPlayers")
+        nearby_raw = payload.get("nearbyPlayers")
+        if not isinstance(nearby_raw, list):
+            nearby_raw = snapshot.get("nearbyPlayers")
         nearby_players = nearby_raw if isinstance(nearby_raw, list) else []
         nearby_items: list[dict[str, Any]] = []
         for item in nearby_players:

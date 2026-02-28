@@ -353,6 +353,7 @@ export function buildAgentQueueRefillRequestedEvent(
   requestId: string,
   remaining: number,
   lastDequeuedAt: number | undefined,
+  nearbyPlayers: unknown,
 ) {
   return {
     eventType: 'agent.queue_refill_requested' as const,
@@ -365,6 +366,7 @@ export function buildAgentQueueRefillRequestedEvent(
       requestId,
       remaining,
       lastDequeuedAt,
+      nearbyPlayers,
       reason: remaining === 0 ? ('empty' as const) : ('low_watermark' as const),
     },
   };
@@ -620,6 +622,7 @@ export const scheduleAgentQueueRefillRequested = internalAction({
     requestId: v.string(),
     remaining: v.number(),
     lastDequeuedAt: v.optional(v.number()),
+    nearbyPlayers: v.any(),
     priority: v.union(v.literal(0), v.literal(1), v.literal(2), v.literal(3)),
   },
   handler: async (ctx: any, args: any) => {
@@ -630,6 +633,7 @@ export const scheduleAgentQueueRefillRequested = internalAction({
       String(args.requestId),
       Number(args.remaining),
       typeof args.lastDequeuedAt === 'number' ? args.lastDequeuedAt : undefined,
+      args.nearbyPlayers,
     );
     await scheduleEventPush(ctx, {
       eventType: built.eventType,

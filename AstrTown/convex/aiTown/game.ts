@@ -12,8 +12,6 @@ import { WorldMap, serializedWorldMap } from './worldMap';
 import { PlayerDescription, serializedPlayerDescription } from './playerDescription';
 import { Location, locationFields, playerLocation } from './location';
 import { runAgentOperation } from './agent';
-import { CONVERSATION_DISTANCE } from '../constants';
-import { distance } from '../util/geometry';
 import { GameId, IdTypes, allocGameId } from './ids';
 import { InputArgs, InputNames, inputs } from './inputs';
 import {
@@ -285,6 +283,7 @@ export class Game extends AbstractGame {
       requestId: string;
       remaining: number;
       lastDequeuedAt?: number;
+      nearbyPlayers: Array<{ id: string; name: string; position: unknown }>;
     }> = [];
     for (const agent of newWorld.agents) {
       const prefetch = agent.externalQueueState?.prefetch;
@@ -297,12 +296,23 @@ export class Game extends AbstractGame {
 
       const remaining =
         (agent.externalEventQueue?.length ?? 0) + (agent.externalPriorityQueue?.length ?? 0);
+      const player = newWorld.players.find((p) => p.id === agent.playerId);
+      const nearbyPlayers = player
+        ? newWorld.players
+            .filter((p) => p.id !== player.id)
+            .map((p) => ({
+              id: p.id,
+              name: (p as any).name,
+              position: p.position,
+            }))
+        : [];
       queueRefillRequests.push({
         agentId: agent.id,
         playerId: agent.playerId,
         requestId: prefetch.requestId,
         remaining,
         lastDequeuedAt: agent.externalQueueState?.lastDequeuedAt,
+        nearbyPlayers,
       });
       // 标记为已分发，避免每个 step 重复推送同一个 prefetch 请求。
       prefetch.dispatched = true;
@@ -408,7 +418,6 @@ export class Game extends AbstractGame {
           const position = player.position;
           const nearbyPlayers = newWorld.players
             .filter((p) => p.id !== player.id)
-            .filter((p) => distance(p.position, position) <= CONVERSATION_DISTANCE)
             .map((p) => ({
               id: p.id,
               name: (p as any).name,
@@ -441,6 +450,7 @@ export class Game extends AbstractGame {
           requestId: request.requestId,
           remaining: request.remaining,
           lastDequeuedAt: request.lastDequeuedAt,
+          nearbyPlayers: request.nearbyPlayers,
           priority: 0,
         },
       );

@@ -69,6 +69,7 @@ export type AgentQueueRefillRequestedPayload = {
   requestId: string;
   remaining: number;
   lastDequeuedAt?: number;
+  nearbyPlayers: unknown;
   reason: 'empty' | 'low_watermark';
 };
 
