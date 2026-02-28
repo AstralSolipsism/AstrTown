@@ -12,6 +12,9 @@ export type GatewayConfig = {
   ackTimeoutMs: number;
   ackMaxRetries: number;
   ackBackoffMs: number[];
+  queueMaxSizePerLevel: number;
+  queueRefillAckTimeoutMs: number;
+  queueRefillMaxRetries: number;
 };
 
 function requireEnv(name: string): string {
@@ -52,6 +55,22 @@ export function loadConfig(): GatewayConfig {
   const ackMaxRetries = parsePositiveInt(process.env.ACK_MAX_RETRIES, DEFAULT_ACK_PLAN.maxRetries, 'ACK_MAX_RETRIES');
   const ackBackoffMs = parseBackoff(process.env.ACK_BACKOFF_MS);
 
+  const queueMaxSizePerLevel = parsePositiveInt(
+    process.env.QUEUE_MAX_SIZE_PER_LEVEL,
+    100,
+    'QUEUE_MAX_SIZE_PER_LEVEL',
+  );
+  const queueRefillAckTimeoutMs = parsePositiveInt(
+    process.env.QUEUE_REFILL_ACK_TIMEOUT_MS,
+    ackTimeoutMs * 2,
+    'QUEUE_REFILL_ACK_TIMEOUT_MS',
+  );
+  const queueRefillMaxRetries = parsePositiveInt(
+    process.env.QUEUE_REFILL_MAX_RETRIES,
+    1,
+    'QUEUE_REFILL_MAX_RETRIES',
+  );
+
   return {
     astrTownUrl,
     port,
@@ -61,5 +80,8 @@ export function loadConfig(): GatewayConfig {
     ackTimeoutMs,
     ackMaxRetries,
     ackBackoffMs,
+    queueMaxSizePerLevel,
+    queueRefillAckTimeoutMs,
+    queueRefillMaxRetries,
   };
 }

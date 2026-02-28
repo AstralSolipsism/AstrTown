@@ -1,6 +1,13 @@
 import type { BotConnection, ConnectionManager } from './connectionManager.js';
 import { createSubscriptionMatcher } from './subscription.js';
-import { ackFailuresTotal, eventDispatchLatencyMs, eventsDispatchedTotal, eventsExpiredTotal, queueDepth } from './metrics.js';
+import {
+  ackFailuresTotal,
+  eventDispatchLatencyMs,
+  eventsDispatchedTotal,
+  eventsDroppedTotal,
+  eventsExpiredTotal,
+  queueDepth,
+} from './metrics.js';
 import type { WsWorldEventBase } from './types.js';
 import { DEFAULT_ACK_PLAN, EventQueue, type QueuedEvent, type RetryPlan } from './eventQueue.js';
 
@@ -10,6 +17,7 @@ export type EventDispatcherDeps<TEvent extends WsWorldEventBase<string, any>> = 
   send: (conn: BotConnection, msg: TEvent) => void;
   log: { info: (o: any, m?: string) => void; warn: (o: any, m?: string) => void; error: (o: any, m?: string) => void };
   ackPlan?: RetryPlan;
+  queueRefillAckPlan?: Pick<RetryPlan, 'timeoutMs' | 'maxRetries'>;
 };
 
 export class EventDispatcher<TEvent extends WsWorldEventBase<string, any>> {
@@ -18,9 +26,14 @@ export class EventDispatcher<TEvent extends WsWorldEventBase<string, any>> {
     { agentId: string; eventId: string; type: string; enqueuedAt: number; timer: NodeJS.Timeout }
   >();
   private readonly ackPlan: RetryPlan;
+  private readonly queueRefillAckPlan: { timeoutMs: number; maxRetries: number };
 
   constructor(private readonly deps: EventDispatcherDeps<TEvent>) {
     this.ackPlan = deps.ackPlan ?? DEFAULT_ACK_PLAN;
+    this.queueRefillAckPlan = deps.queueRefillAckPlan ?? {
+      timeoutMs: this.ackPlan.timeoutMs,
+      maxRetries: this.ackPlan.maxRetries,
+    };
   }
 
   onAck(agentId: string, eventId: string): void {
@@ -105,12 +118,17 @@ export class EventDispatcher<TEvent extends WsWorldEventBase<string, any>> {
       return;
     }
 
+    const isQueueRefill = item.event.type === 'agent.queue_refill_requested';
+    const maxRetries = isQueueRefill ? this.queueRefillAckPlan.maxRetries : this.ackPlan.maxRetries;
+    const timeoutMs = isQueueRefill ? this.queueRefillAckPlan.timeoutMs : this.ackPlan.timeoutMs;
+
     const timer = setTimeout(() => {
       this.inflight.delete(key);
 
-      if (item.attempts >= this.ackPlan.maxRetries) {
+      if (item.attempts >= maxRetries) {
         ackFailuresTotal.inc({ type: item.event.type });
         eventsDispatchedTotal.inc({ type: item.event.type, status: 'failed' });
+        eventsDroppedTotal.inc({ type: item.event.type, priority: String(item.priority), reason: 'ack_retry_exhausted' });
         this.deps.log.error({ agentId, eventId: item.event.id, type: item.event.type }, 'ack failed');
         const q = this.deps.getQueue(agentId);
         q.removeByEventId(item.event.id);
@@ -125,10 +143,21 @@ export class EventDispatcher<TEvent extends WsWorldEventBase<string, any>> {
       item.nextAttemptAt = Date.now() + delay;
 
       const q = this.deps.getQueue(agentId);
-      q.enqueue(item.event, item.priority);
+      const { dropped, dropReason } = q.enqueue(item.event, item.priority, {
+        enqueuedAt: item.enqueuedAt,
+        attempts: item.attempts,
+        nextAttemptAt: item.nextAttemptAt,
+      });
+      if (dropped) {
+        eventsDroppedTotal.inc({
+          type: dropped.event.type,
+          priority: String(dropped.priority),
+          reason: dropReason ?? 'overflow_oldest',
+        });
+      }
       this.deps.log.warn({ agentId, eventId: item.event.id, delay }, 'ack timeout, retry scheduled');
       this.tryDispatch(agentId);
-    }, this.ackPlan.timeoutMs);
+    }, timeoutMs);
 
     this.inflight.set(key, {
       agentId,
@@ -140,8 +169,12 @@ export class EventDispatcher<TEvent extends WsWorldEventBase<string, any>> {
   }
 
   private onSendFailure(agentId: string, item: QueuedEvent<TEvent>): void {
-    if (item.attempts >= this.ackPlan.maxRetries) {
+    const isQueueRefill = item.event.type === 'agent.queue_refill_requested';
+    const maxRetries = isQueueRefill ? this.queueRefillAckPlan.maxRetries : this.ackPlan.maxRetries;
+
+    if (item.attempts >= maxRetries) {
       ackFailuresTotal.inc({ type: item.event.type });
+      eventsDroppedTotal.inc({ type: item.event.type, priority: String(item.priority), reason: 'send_retry_exhausted' });
       this.deps.log.error({ agentId, eventId: item.event.id, type: item.event.type }, 'send failed, dropping event');
       const q = this.deps.getQueue(agentId);
       q.removeByEventId(item.event.id);
@@ -156,7 +189,18 @@ export class EventDispatcher<TEvent extends WsWorldEventBase<string, any>> {
     item.nextAttemptAt = Date.now() + delay;
 
     const q = this.deps.getQueue(agentId);
-    q.enqueue(item.event, item.priority);
+    const { dropped, dropReason } = q.enqueue(item.event, item.priority, {
+      enqueuedAt: item.enqueuedAt,
+      attempts: item.attempts,
+      nextAttemptAt: item.nextAttemptAt,
+    });
+    if (dropped) {
+      eventsDroppedTotal.inc({
+        type: dropped.event.type,
+        priority: String(dropped.priority),
+        reason: dropReason ?? 'overflow_oldest',
+      });
+    }
     this.updateQueueDepth(agentId);
     this.deps.log.warn({ agentId, eventId: item.event.id, delay }, 'send failed, retry scheduled');
   }

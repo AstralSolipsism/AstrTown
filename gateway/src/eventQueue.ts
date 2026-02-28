@@ -24,6 +24,19 @@ export type DequeueResult<TEvent> =
   | { kind: 'expired'; dropped: QueuedEvent<TEvent> }
   | { kind: 'ready'; item: QueuedEvent<TEvent> };
 
+export type QueueDropReason = 'overflow_oldest' | 'overflow_incoming' | 'overflow_replaced_non_critical';
+
+export type EnqueueResult<TEvent> = {
+  dropped?: QueuedEvent<TEvent>;
+  dropReason?: QueueDropReason;
+};
+
+const CRITICAL_EVENT_TYPES = new Set<string>(['conversation.ended', 'conversation.timeout']);
+
+function isCriticalEventType(type: string): boolean {
+  return CRITICAL_EVENT_TYPES.has(type);
+}
+
 export class EventQueue<TEvent extends { id: string; type: string; expiresAt: number }>
   implements Iterable<QueuedEvent<TEvent>>
 {
@@ -32,25 +45,47 @@ export class EventQueue<TEvent extends { id: string; type: string; expiresAt: nu
 
   constructor(private readonly perPriorityLimit = 100) {}
 
-  enqueue(event: TEvent, priority: 0 | 1 | 2 | 3): { dropped?: QueuedEvent<TEvent> } {
+  enqueue(
+    event: TEvent,
+    priority: 0 | 1 | 2 | 3,
+    options?: Partial<Pick<QueuedEvent<TEvent>, 'enqueuedAt' | 'attempts' | 'nextAttemptAt'>>,
+  ): EnqueueResult<TEvent> {
     const now = Date.now();
     const item: QueuedEvent<TEvent> = {
       event,
       priority,
-      enqueuedAt: now,
+      enqueuedAt: options?.enqueuedAt ?? now,
       expiresAt: event.expiresAt,
-      attempts: 0,
-      nextAttemptAt: now,
+      attempts: options?.attempts ?? 0,
+      nextAttemptAt: options?.nextAttemptAt ?? now,
     };
     const q = this.queues[priority];
     q.push(item);
 
-    if (q.length > this.perPriorityLimit) {
-      const dropped = q.shift();
-      return dropped ? { dropped } : {};
+    if (q.length <= this.perPriorityLimit) {
+      return {};
     }
 
-    return {};
+    const incomingCritical = isCriticalEventType(item.event.type);
+
+    if (incomingCritical) {
+      const replaceIdx = q.findIndex((queued) => !isCriticalEventType(queued.event.type));
+      if (replaceIdx >= 0) {
+        const [dropped] = q.splice(replaceIdx, 1);
+        return dropped ? { dropped, dropReason: 'overflow_replaced_non_critical' } : {};
+      }
+    }
+
+    if (!incomingCritical) {
+      const hasCritical = q.some((queued, idx) => idx !== q.length - 1 && isCriticalEventType(queued.event.type));
+      if (hasCritical) {
+        q.pop();
+        return { dropped: item, dropReason: 'overflow_incoming' };
+      }
+    }
+
+    const dropped = q.shift();
+    return dropped ? { dropped, dropReason: 'overflow_oldest' } : {};
   }
 
   peekNextReady(now = Date.now()): DequeueResult<TEvent> {
@@ -93,6 +128,18 @@ export class EventQueue<TEvent extends { id: string; type: string; expiresAt: nu
       if (idx >= 0) {
         q.splice(idx, 1);
         removed = true;
+      }
+    }
+    return removed;
+  }
+
+  removeByType(type: string): number {
+    let removed = 0;
+    for (const q of this.queues) {
+      for (let i = q.length - 1; i >= 0; i -= 1) {
+        if (q[i].event.type !== type) continue;
+        q.splice(i, 1);
+        removed += 1;
       }
     }
     return removed;

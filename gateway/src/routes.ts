@@ -12,11 +12,7 @@ import type { IdempotencyCache } from './utils.js';
 import { createUuid } from './uuid.js';
 
 export function registerHttpRoutes<TEvent extends WsWorldEventBase<string, any>>(app: FastifyInstance, deps: {
-  config: GatewayConfig & {
-    ackTimeoutMs: number;
-    ackMaxRetries: number;
-    queueMaxSizePerLevel: number;
-  };
+  config: GatewayConfig;
   astr: import('./astrtownClient.js').AstrTownClient;
   connections: ConnectionManager;
   queues: BotQueueRegistry<TEvent>;

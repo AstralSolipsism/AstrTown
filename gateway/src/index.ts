@@ -35,7 +35,7 @@ const commandQueue = new CommandQueue({
   log: app.log,
 });
 
-const queues = new BotQueueRegistry<WorldEvent>(Number(process.env.QUEUE_MAX_SIZE_PER_LEVEL ?? '100'));
+const queues = new BotQueueRegistry<WorldEvent>(config.queueMaxSizePerLevel);
 
 const dispatcher = new EventDispatcher<WorldEvent>({
   connections,
@@ -44,6 +44,10 @@ const dispatcher = new EventDispatcher<WorldEvent>({
     timeoutMs: config.ackTimeoutMs,
     maxRetries: config.ackMaxRetries,
     backoffMs: config.ackBackoffMs,
+  },
+  queueRefillAckPlan: {
+    timeoutMs: config.queueRefillAckTimeoutMs,
+    maxRetries: config.queueRefillMaxRetries,
   },
   send: (conn, msg) => {
     try {
@@ -91,12 +95,7 @@ registerWsRoutes(app, {
 });
 
 registerHttpRoutes(app, {
-  config: {
-    ...config,
-    ackTimeoutMs: config.ackTimeoutMs,
-    ackMaxRetries: config.ackMaxRetries,
-    queueMaxSizePerLevel: Number(process.env.QUEUE_MAX_SIZE_PER_LEVEL ?? '100'),
-  },
+  config,
   astr,
   connections,
   queues,

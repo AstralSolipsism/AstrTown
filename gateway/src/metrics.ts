@@ -62,6 +62,12 @@ export const eventsExpiredTotal = new Counter({
   labelNames: ['type', 'priority'] as const,
 });
 
+export const eventsDroppedTotal = new Counter({
+  name: 'gateway_events_dropped_total',
+  help: 'Total dropped world events',
+  labelNames: ['type', 'priority', 'reason'] as const,
+});
+
 export const queueDepth = new Gauge({
   name: 'gateway_queue_depth',
   help: 'Queue depth per agent and priority',
