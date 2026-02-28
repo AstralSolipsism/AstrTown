@@ -283,9 +283,47 @@ class WorldEventDispatcher:
             )
             self._host._track_background_task(reflect_task)
 
+            logger.info(
+                f"[AstrTown] 对话结束事件已处理: conversationId={ended_cid or '-'}, agentId={self._host._agent_id}"
+            )
+            try:
+                await self._ack_sender.send_event_ack(event_id)
+            except Exception as e:
+                logger.warning(f"[AstrTown] send event ack failed for eventId={event_id}: {e}")
+            return
+
         if event_type == "conversation.started":
             started_cid = str(payload.get("conversationId") or "").strip()
+            dedupe_window_ms = self._safe_int(
+                self._host.config.get("astrtown_started_dedupe_window_ms", 3000),
+                3000,
+                "astrtown_started_dedupe_window_ms",
+                "platform_config",
+            )
+            now_ms = int(time.time() * 1000)
             if started_cid:
+                last_seen_ms = self._host._conversation_started_recent_ms.get(started_cid)
+                if (
+                    dedupe_window_ms > 0
+                    and isinstance(last_seen_ms, int)
+                    and now_ms - last_seen_ms < dedupe_window_ms
+                ):
+                    logger.info(
+                        "[AstrTown] 去重 conversation.started: "
+                        f"conversationId={started_cid}, elapsedMs={now_ms - last_seen_ms}"
+                    )
+                    try:
+                        await self._ack_sender.send_event_ack(event_id)
+                    except Exception as e:
+                        logger.warning(f"[AstrTown] send event ack failed for eventId={event_id}: {e}")
+                    return
+
+                self._host._conversation_started_recent_ms[started_cid] = now_ms
+                expire_before = now_ms - max(dedupe_window_ms * 4, 10_000)
+                for cid, ts in list(self._host._conversation_started_recent_ms.items()):
+                    if ts < expire_before:
+                        self._host._conversation_started_recent_ms.pop(cid, None)
+
                 self._host._active_conversation_id = started_cid
 
             owner_id = str(self._host._player_id or "").strip()

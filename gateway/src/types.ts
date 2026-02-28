@@ -46,6 +46,12 @@ export type ConversationMessagePayload = {
   };
 };
 
+export type ConversationEndedPayload = {
+  conversationId: string;
+  otherParticipantId?: string;
+  otherParticipantName?: string;
+};
+
 export interface ConversationTimeoutPayload {
   conversationId: string;
   reason: 'invite_timeout' | 'idle_timeout';
@@ -115,6 +121,8 @@ export type ConversationMessageEvent = WsWorldEventBase<
   ConversationMessagePayload
 >;
 
+export type ConversationEndedEvent = WsWorldEventBase<'conversation.ended', ConversationEndedPayload>;
+
 export interface ConversationTimeoutEvent
   extends WsWorldEventBase<'conversation.timeout', ConversationTimeoutPayload> {}
 
@@ -156,6 +164,7 @@ export type WorldEvent =
   | ConversationStartedEvent
   | ConversationInvitedEvent
   | ConversationMessageEvent
+  | ConversationEndedEvent
   | ConversationTimeoutEvent
   | ActionFinishedEvent
   | AgentQueueRefillRequestedEvent
@@ -260,6 +269,7 @@ export type WsOutboundMessage =
   | ConversationStartedEvent
   | ConversationInvitedEvent
   | ConversationMessageEvent
+  | ConversationEndedEvent
   | ConversationTimeoutEvent
   | ActionFinishedEvent
   | AgentQueueRefillRequestedEvent

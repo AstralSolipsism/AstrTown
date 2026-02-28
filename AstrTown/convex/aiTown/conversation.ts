@@ -213,13 +213,32 @@ export class Conversation {
 
   stop(game: Game, now: number) {
     delete this.isTyping;
-    for (const [playerId, member] of this.participants.entries()) {
+
+    const participantIds = [...this.participants.keys()];
+    for (const playerId of participantIds) {
       const agent = [...game.world.agents.values()].find((a) => a.playerId === playerId);
-      if (agent) {
-        agent.lastConversation = now;
-        agent.toRemember = this.id;
+      if (!agent) {
+        continue;
       }
+
+      agent.lastConversation = now;
+      agent.toRemember = this.id;
+
+      const otherParticipantId = participantIds.find((id) => id !== playerId);
+      game.pendingOperations.push({
+        name: 'conversation.ended',
+        args: {
+          agentId: agent.id,
+          worldId: game.worldId,
+          conversationId: this.id,
+          otherParticipantId,
+          otherParticipantName: otherParticipantId
+            ? game.playerDescriptions.get(otherParticipantId)?.name
+            : undefined,
+        },
+      });
     }
+
     game.world.conversations.delete(this.id);
   }
 

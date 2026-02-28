@@ -30,5 +30,35 @@
     "type": "int",
     "default": 50,
     "hint": "LLM 请求前保留的最大对话轮次数（1轮=user+assistant），插件侧裁剪 messages 使用"
+  },
+  "astrtown_started_dedupe_window_ms": {
+    "description": "对话开始事件去重窗口（毫秒）",
+    "type": "int",
+    "default": 3000,
+    "hint": "同一 conversation.started 在窗口内重复到达时仅ACK不唤醒"
+  },
+  "astrtown_say_debounce_window_ms": {
+    "description": "发言防抖窗口（毫秒）",
+    "type": "int",
+    "default": 1200,
+    "hint": "command.say 最小间隔，窗口内重复发言将被拦截"
+  },
+  "astrtown_say_duplicate_window_ms": {
+    "description": "重复文案抑制窗口（毫秒）",
+    "type": "int",
+    "default": 3000,
+    "hint": "同会话内相同文本在窗口内重复发送将被拦截"
+  },
+  "astrtown_command_ack_timeout_sec": {
+    "description": "命令ACK等待超时（秒）",
+    "type": "int",
+    "default": 10,
+    "hint": "send_command 等待 command.ack 的超时时间"
+  },
+  "astrtown_late_ack_tombstone_ttl_sec": {
+    "description": "迟到ACK识别保留时长（秒）",
+    "type": "int",
+    "default": 120,
+    "hint": "命令超时后保留 commandId 的时长，用于识别 late ack"
   }
 }

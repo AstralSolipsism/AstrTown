@@ -57,26 +57,35 @@ class SessionContextService:
             )
         return messages
 
-    def build_session_id(self, _event_type: str, payload: dict[str, Any]) -> str:
+    def build_session_id(self, event_type: str, payload: dict[str, Any]) -> str:
         player_id = str(self._host._player_id or payload.get("playerId") or "").strip()
         world_id = str(self._host._world_id or payload.get("worldId") or "").strip()
 
-        # 修复2：sid world/NPC 二态，受 AstrBot 全局 unique_session 控制（来自 platform_settings）。
+        # 会话隔离粒度：
+        # 1) conversation.* 事件优先按 world + owner + conversationId 隔离，避免串线。
+        # 2) 其他事件沿用 unique_session 的 world/world+player 二态。
         unique_session = bool(getattr(self._host, "settings", {}) and self._host.settings.get("unique_session", False))
 
         if not world_id:
             world_id = "default"
 
-        if not unique_session:
+        conversation_id = ""
+        if event_type.startswith("conversation."):
+            conversation_id = str(payload.get("conversationId") or "").strip()
+
+        if conversation_id and player_id:
+            sid = f"astrtown:world:{world_id}:player:{player_id}:conversation:{conversation_id}"
+        elif not unique_session:
             sid = f"astrtown:world:{world_id}"
         else:
-            # 开启隔离：每个 NPC 一个会话；player_id 缺失时退化为 world 会话。
             if player_id:
                 sid = f"astrtown:world:{world_id}:player:{player_id}"
             else:
                 sid = f"astrtown:world:{world_id}"
 
         logger.info(
-            f"[AstrTown] _build_session_id: unique_session={unique_session}, world_id={world_id}, player_id={player_id}, sid={sid}"
+            "[AstrTown] _build_session_id: "
+            f"event_type={event_type}, unique_session={unique_session}, world_id={world_id}, "
+            f"player_id={player_id}, conversation_id={conversation_id}, sid={sid}"
         )
         return sid

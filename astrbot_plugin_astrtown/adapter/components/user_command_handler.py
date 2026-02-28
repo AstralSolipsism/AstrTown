@@ -529,6 +529,7 @@ class UserCommandHandler:
             return f"{prefix}：已提交（未获取 ACK 详情）。"
 
         ok = bool(ack.get("ok"))
+        status = str(ack.get("status") or "").strip().lower()
         command_id = str(ack.get("commandId") or "").strip()
         reason = str(ack.get("reason") or "").strip()
 
@@ -536,6 +537,18 @@ class UserCommandHandler:
             if command_id:
                 return f"{prefix}：已受理（commandId={command_id}）。注意：受理不代表已执行完成。"
             return f"{prefix}：已受理。注意：受理不代表已执行完成。"
+
+        if status == "debounced":
+            retry_after_ms_raw = ack.get("retryAfterMs")
+            if isinstance(retry_after_ms_raw, (int, float)):
+                retry_after_sec = max(0.0, float(retry_after_ms_raw) / 1000.0)
+                return f"{prefix}失败：发言过快，已触发防抖，请约 {retry_after_sec:.1f} 秒后重试。"
+            return f"{prefix}失败：发言过快，已触发防抖，请稍后重试。"
+
+        if status == "timeout":
+            if command_id:
+                return f"{prefix}失败：命令已发送但 ACK 超时（commandId={command_id}），请稍后确认状态。"
+            return f"{prefix}失败：命令已发送但 ACK 超时，请稍后确认状态。"
 
         if reason:
             return f"{prefix}失败：{reason}"

@@ -388,6 +388,16 @@ export class Game extends AbstractGame {
              priority: 0,
            });
            break;
+        case 'conversation.ended':
+          await ctx.scheduler.runAfter(0, internal.aiTown.worldEventDispatcher.scheduleConversationEnded, {
+            worldId,
+            agentId: operation.args.agentId,
+            conversationId: operation.args.conversationId,
+            otherParticipantId: operation.args.otherParticipantId,
+            otherParticipantName: operation.args.otherParticipantName,
+            priority: 0,
+          });
+          break;
         case 'conversation.timeout':
           await ctx.scheduler.runAfter(0, internal.aiTown.worldEventDispatcher.scheduleConversationTimeout, {
             worldId,

@@ -28,6 +28,9 @@ class AdapterHostProtocol(Protocol):
     _auth_failed_token: str
     _auth_failed_code: str | None
     _auth_failed_last_log_ts: float
+    _conversation_started_recent_ms: dict[str, int]
+    _say_debounce_state: dict[str, dict[str, Any]]
+    _recent_timed_out_commands: dict[str, float]
     _last_refill_wake_ts: float
     _queue_refill_gate_last_log_ts: float
     _queue_refill_gate_last_should_wake: bool | None

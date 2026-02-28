@@ -115,6 +115,16 @@ class AstrTownAdapter(Platform):
         # 3.4：维护当前会话对方 player_id，供插件侧张力 Prompt 注入使用。
         self._conversation_partner_id: str | None = None
 
+        # conversation.started 幂等去重：conversationId -> 最近处理时间(ms)
+        self._conversation_started_recent_ms: dict[str, int] = {}
+
+        # command.say 防抖状态："agentId:conversationId" -> 最近发送状态
+        self._say_debounce_state: dict[str, dict[str, Any]] = {}
+
+        # command ACK 竞态缓冲：记录“已超时”的 commandId，供迟到 ACK 识别。
+        # value 为过期时间戳(秒, time.time())。
+        self._recent_timed_out_commands: dict[str, float] = {}
+
         self.gateway_url = str(
             platform_config.get("astrtown_gateway_url", "http://localhost:40010")
         ).rstrip("/")

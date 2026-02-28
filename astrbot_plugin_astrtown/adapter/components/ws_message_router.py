@@ -174,6 +174,18 @@ class WsMessageRouter:
 
             fut = self._host._pending_commands.pop(command_id, None)
             if fut is None:
+                now_ts = time.time()
+                tombstone_expire_at = self._host._recent_timed_out_commands.get(command_id)
+                if isinstance(tombstone_expire_at, float) and tombstone_expire_at >= now_ts:
+                    logger.debug(f"[AstrTown] late command.ack matched timeout tombstone: commandId={command_id}")
+                    self._host._recent_timed_out_commands.pop(command_id, None)
+                    return
+
+                # 顺带清理过期 tombstone，避免增长。
+                for cid, expire_at in list(self._host._recent_timed_out_commands.items()):
+                    if expire_at < now_ts:
+                        self._host._recent_timed_out_commands.pop(cid, None)
+
                 logger.debug(f"[AstrTown] command.ack for unknown commandId={command_id}")
                 return
             if not fut.done():

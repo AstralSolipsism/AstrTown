@@ -8,6 +8,7 @@ const SUPPORTED_GATEWAY_EVENT_TYPES = new Set<string>([
   'conversation.started',
   'conversation.invited',
   'conversation.message',
+  'conversation.ended',
   'conversation.timeout',
   'action.finished',
   'agent.queue_refill_requested',

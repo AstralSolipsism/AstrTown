@@ -8,6 +8,7 @@ export type GatewayEventType =
   | 'conversation.started'
   | 'conversation.invited'
   | 'conversation.message'
+  | 'conversation.ended'
   | 'conversation.timeout'
   | 'agent.state_changed'
   | 'action.finished'
@@ -25,6 +26,7 @@ const EVENT_TTL_MS: Partial<Record<GatewayEventType, number>> = {
   'conversation.started': 120_000,
   'conversation.invited': 120_000,
   'conversation.message': 120_000,
+  'conversation.ended': 120_000,
   'conversation.timeout': 120_000,
   'agent.state_changed': 30_000,
   'action.finished': 60_000,
@@ -291,6 +293,25 @@ export function buildConversationMessageEvent(
   };
 }
 
+export function buildConversationEndedEvent(
+  worldId: string,
+  agentId: string,
+  conversationId: string,
+  otherParticipantId?: string,
+  otherParticipantName?: string,
+) {
+  return {
+    eventType: 'conversation.ended' as const,
+    agentId,
+    worldId,
+    payload: {
+      conversationId,
+      otherParticipantId,
+      otherParticipantName,
+    },
+  };
+}
+
 export function buildConversationTimeoutEvent(
   worldId: string,
   agentId: string,
@@ -387,7 +408,9 @@ export async function scheduleEventPush(
 ) {
   let targetAgentIds: string[];
 
-  if (args.eventType === 'agent.queue_refill_requested') {
+  if (args.eventType === 'conversation.ended') {
+    targetAgentIds = [String(args.eventAgentId)];
+  } else if (args.eventType === 'agent.queue_refill_requested') {
     targetAgentIds = [String(args.eventAgentId)];
   } else if (args.eventType === 'conversation.invited') {
     const conversationId = getConversationIdFromPayload(args.payload);
@@ -523,6 +546,33 @@ export const scheduleConversationMessage = internalAction({
       args.conversationId,
       args.messageContent,
       args.speakerId,
+    );
+    await scheduleEventPush(ctx, {
+      eventType: built.eventType,
+      eventAgentId: args.agentId,
+      worldId: args.worldId,
+      payload: built.payload,
+      priority: args.priority,
+    });
+  },
+});
+
+export const scheduleConversationEnded = internalAction({
+  args: {
+    worldId: v.id('worlds'),
+    agentId: v.string(),
+    conversationId: v.string(),
+    otherParticipantId: v.optional(v.string()),
+    otherParticipantName: v.optional(v.string()),
+    priority: v.union(v.literal(0), v.literal(1), v.literal(2), v.literal(3)),
+  },
+  handler: async (ctx: any, args: any) => {
+    const built = buildConversationEndedEvent(
+      String(args.worldId),
+      String(args.agentId),
+      args.conversationId,
+      args.otherParticipantId,
+      args.otherParticipantName,
     );
     await scheduleEventPush(ctx, {
       eventType: built.eventType,
