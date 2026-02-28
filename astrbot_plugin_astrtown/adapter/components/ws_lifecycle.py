@@ -9,6 +9,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 try:
     from websockets.asyncio.client import connect
+    from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 except Exception as e:  # pragma: no cover
     raise RuntimeError(
         "astrbot_plugin_astrtown requires 'websockets' dependency available in AstrBot runtime"
@@ -62,6 +63,30 @@ class WsLifecycleService:
             # 最佳努力回退：即使 url 解析失败，也要避免泄露 token。
             return url.split("?")[0] + "?token=***" if "?" in url else url
 
+    @staticmethod
+    def _build_ws_close_detail(exc: BaseException) -> str:
+        code = getattr(exc, "code", None)
+        reason = getattr(exc, "reason", None)
+
+        parts: list[str] = []
+        if code is not None:
+            parts.append(f"code={code}")
+        if reason:
+            parts.append(f"reason={reason}")
+
+        msg = str(exc).strip()
+        if msg:
+            parts.append(f"detail={msg}")
+
+        return "，".join(parts) if parts else "无详细信息"
+
+    @staticmethod
+    def _friendly_ws_closed_error(exc: ConnectionClosedError) -> str:
+        msg = str(exc).lower()
+        if "no close frame received or sent" in msg:
+            return "网络中断或服务端异常断开（未完成关闭握手）"
+        return f"连接异常关闭（{WsLifecycleService._build_ws_close_detail(exc)}）"
+
     async def ws_loop(self) -> None:
         delay = float(self._host.reconnect_min_delay)
         while not self._host._stop_event.is_set():
@@ -109,8 +134,14 @@ class WsLifecycleService:
                 delay = float(self._host.reconnect_min_delay)
             except asyncio.CancelledError:
                 return
+            except ConnectionClosedOK as e:
+                logger.info(f"[AstrTown] ws 连接已正常关闭（{self._build_ws_close_detail(e)}）")
+            except ConnectionClosedError as e:
+                logger.warning(f"[AstrTown] ws {self._friendly_ws_closed_error(e)}，将自动重连")
+            except OSError as e:
+                logger.warning(f"[AstrTown] ws 网络异常：{e}，将自动重连")
             except Exception as e:
-                logger.error(f"[AstrTown] ws loop error: {e}", exc_info=True)
+                logger.error(f"[AstrTown] ws 连接发生未预期异常（{type(e).__name__}: {e}），将自动重连")
 
             if self._host._stop_event.is_set():
                 return
@@ -121,7 +152,7 @@ class WsLifecycleService:
 
             jitter = random.random() * 0.3 + 0.85
             sleep_s = min(delay * jitter, float(self._host.reconnect_max_delay))
-            logger.warn(f"[AstrTown] reconnect in {sleep_s:.1f}s")
+            logger.warning(f"[AstrTown] {sleep_s:.1f}s 后执行 ws 重连")
             await asyncio.sleep(sleep_s)
             delay = min(delay * 2.0, float(self._host.reconnect_max_delay))
 
