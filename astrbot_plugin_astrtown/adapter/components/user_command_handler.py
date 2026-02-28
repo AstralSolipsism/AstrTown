@@ -28,7 +28,7 @@ class UserCommandHandler:
         return (
             "AstrTown 用户指令：\n"
             "/astrtown help - 查看帮助\n"
-            "/astrtown bind <角色ID> - 绑定当前会话到角色\n"
+            "/astrtown bind [角色ID|list] - 绑定角色或查看可绑定角色列表\n"
             "/astrtown unbind - 解除当前绑定\n"
             "/astrtown whoami - 查看当前绑定\n"
             "/astrtown status - 查看角色状态\n"
@@ -41,12 +41,15 @@ class UserCommandHandler:
 
     async def handle_bind(self, event: AstrMessageEvent, player_id: str) -> str:
         pid = str(player_id or "").strip()
-        if not pid:
-            return "绑定失败：角色ID不能为空。"
+        if not pid or pid.lower() == "list":
+            return self._format_registered_role_list()
 
         target_adapter = self._find_adapter_by_player_id(pid)
         if target_adapter is None:
-            return "绑定失败：未找到该角色所属的 AstrTown 连接。请确认角色已上线且适配器配置正确。"
+            return (
+                f"绑定失败：未找到角色ID为 {pid} 的 AstrTown 连接。\n"
+                f"{self._format_registered_role_list()}"
+            )
 
         session_key = event.unified_msg_origin
         platform_id = str(target_adapter.meta().id or "").strip()
@@ -54,6 +57,12 @@ class UserCommandHandler:
             return "绑定失败：目标 AstrTown 连接缺少平台ID。"
 
         self.player_binding.bind(session_key, platform_id, pid)
+
+        bind_info = target_adapter.get_binding()
+        player_name = str(bind_info.get("playerName") or "").strip()
+        if player_name:
+            return f"绑定成功：当前会话已绑定角色 {player_name}（{pid}，连接: {platform_id}）。"
+
         return f"绑定成功：当前会话已绑定角色 {pid}（连接: {platform_id}）。"
 
     async def handle_unbind(self, event: AstrMessageEvent) -> str:
@@ -327,27 +336,80 @@ class UserCommandHandler:
         return self._format_command_ack("取消指令已下发", ack)
 
     def _find_adapter_by_player_id(self, player_id: str) -> AstrTownAdapter | None:
-        context = self._context
-        if context is None:
-            return self._match_current_adapter_by_player_id(player_id)
+        pid = str(player_id or "").strip()
+        if not pid:
+            return None
 
-        platform_manager = getattr(context, "platform_manager", None)
-        if platform_manager is None:
-            return self._match_current_adapter_by_player_id(player_id)
-
-        platform_insts = getattr(platform_manager, "platform_insts", None)
-        if not isinstance(platform_insts, list):
-            return self._match_current_adapter_by_player_id(player_id)
-
-        for inst in platform_insts:
-            if not isinstance(inst, AstrTownAdapter):
-                continue
+        for inst in self._iter_registered_adapters():
             bind = inst.get_binding()
             inst_player_id = str(bind.get("playerId") or "").strip()
-            if inst_player_id and inst_player_id == player_id:
+            if inst_player_id and inst_player_id == pid:
                 return inst
 
         return None
+
+    def _iter_registered_adapters(self) -> list[AstrTownAdapter]:
+        adapters: list[AstrTownAdapter] = []
+        seen: set[int] = set()
+
+        context = self._context
+        if context is not None:
+            platform_manager = getattr(context, "platform_manager", None)
+            platform_insts = getattr(platform_manager, "platform_insts", None) if platform_manager is not None else None
+            if isinstance(platform_insts, list):
+                for inst in platform_insts:
+                    if not isinstance(inst, AstrTownAdapter):
+                        continue
+                    inst_key = id(inst)
+                    if inst_key in seen:
+                        continue
+                    seen.add(inst_key)
+                    adapters.append(inst)
+
+        if self.adapter is not None:
+            current_key = id(self.adapter)
+            if current_key not in seen:
+                seen.add(current_key)
+                adapters.append(self.adapter)
+
+        return adapters
+
+    def _collect_registered_roles(self) -> list[dict[str, str]]:
+        roles: list[dict[str, str]] = []
+        for inst in self._iter_registered_adapters():
+            bind = inst.get_binding()
+            player_id = str(bind.get("playerId") or "").strip()
+            if not player_id:
+                continue
+
+            player_name = str(bind.get("playerName") or "").strip()
+            platform_id = str(inst.meta().id or "").strip()
+            roles.append(
+                {
+                    "platform_id": platform_id,
+                    "player_id": player_id,
+                    "player_name": player_name,
+                }
+            )
+
+        return roles
+
+    def _format_registered_role_list(self) -> str:
+        roles = self._collect_registered_roles()
+        if not roles:
+            return "当前没有可绑定角色。请确认 AstrTown 适配器已连接并完成鉴权。"
+
+        lines = [
+            "可绑定角色列表：",
+            "使用方式：/astrtown bind <角色ID>",
+        ]
+        for item in roles:
+            player_name = item.get("player_name") or "未命名角色"
+            player_id = item.get("player_id") or ""
+            platform_id = item.get("platform_id") or "未配置平台ID"
+            lines.append(f"- {player_name} | 角色ID: {player_id} | 连接: {platform_id}")
+
+        return "\n".join(lines)
 
     def _resolve_bound_adapter(self, binding: dict[str, str]) -> AstrTownAdapter | None:
         platform_id = str(binding.get("platform_id") or "").strip()

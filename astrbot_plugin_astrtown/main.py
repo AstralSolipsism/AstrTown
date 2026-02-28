@@ -622,10 +622,8 @@ class AstrTownPlugin(Star):
         if sub == "help":
             reply = await self.user_cmd_handler.handle_help(event)
         elif sub == "bind":
-            if len(parts) < 2:
-                reply = "参数错误：请使用 /astrtown bind <角色ID>。"
-            else:
-                reply = await self.user_cmd_handler.handle_bind(event, parts[1])
+            bind_arg = parts[1] if len(parts) >= 2 else ""
+            reply = await self.user_cmd_handler.handle_bind(event, bind_arg)
         elif sub == "unbind":
             reply = await self.user_cmd_handler.handle_unbind(event)
         elif sub == "whoami":
