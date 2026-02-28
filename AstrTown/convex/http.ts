@@ -17,7 +17,14 @@ import {
   postTokenCreate,
   postTokenValidate,
 } from './botApi';
-import { getNpcList, getNpcTokenById, optionsNpc, postNpcCreate, postNpcResetToken } from './npcService';
+import {
+  getNpcList,
+  getNpcTokenById,
+  optionsNpc,
+  postNpcCreate,
+  postNpcInterrupt,
+  postNpcResetToken,
+} from './npcService';
 
 const http = httpRouter();
 http.route({
@@ -132,6 +139,12 @@ http.route({
   path: '/api/npc/reset-token',
   method: 'POST',
   handler: postNpcResetToken,
+});
+
+http.route({
+  path: '/api/npc/interrupt',
+  method: 'POST',
+  handler: postNpcInterrupt,
 });
 
 http.route({

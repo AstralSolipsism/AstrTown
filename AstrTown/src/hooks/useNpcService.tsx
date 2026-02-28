@@ -265,6 +265,42 @@ export function useNpcService() {
     [authorizedFetch],
   );
 
+  const interruptNpc = useCallback(
+    async (botTokenId: string): Promise<{ inputId: string; conversationId: string; playerId: string }> => {
+      const response = await authorizedFetch('/api/npc/interrupt', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ botTokenId }),
+      });
+      const payload = await parseJsonSafe(response);
+
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, '打断对话失败'));
+      }
+      if (!payload || typeof payload !== 'object') {
+        throw new Error('服务端返回格式不正确');
+      }
+
+      const data = payload as JsonObject;
+      if (
+        typeof data.inputId !== 'string' ||
+        typeof data.conversationId !== 'string' ||
+        typeof data.playerId !== 'string'
+      ) {
+        throw new Error('打断对话响应缺少关键字段');
+      }
+
+      return {
+        inputId: data.inputId,
+        conversationId: data.conversationId,
+        playerId: data.playerId,
+      };
+    },
+    [authorizedFetch],
+  );
+
   return useMemo(
     () => ({
       npcs,
@@ -273,8 +309,9 @@ export function useNpcService() {
       resetToken,
       getToken,
       refreshList,
+      interruptNpc,
     }),
-    [createNpc, getToken, isLoading, npcs, refreshList, resetToken],
+    [createNpc, getToken, interruptNpc, isLoading, npcs, refreshList, resetToken],
   );
 }
 

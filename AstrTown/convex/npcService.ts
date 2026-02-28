@@ -4,6 +4,7 @@ import { action, httpAction, internalMutation, mutation, query } from './_genera
 import { extractSessionToken, validateSession } from './auth';
 import { v } from 'convex/values';
 import { Descriptions } from '../data/characters';
+import { insertInput } from './aiTown/insertInput';
 
 const CREATE_NPC_TIMEOUT_MS = 30_000;
 const CREATE_NPC_POLL_MS = 500;
@@ -389,6 +390,62 @@ export const resetNpcToken = mutation({
   },
 });
 
+export const interruptNpcConversation = mutation({
+  args: {
+    sessionToken: v.string(),
+    botTokenId: v.id('botTokens'),
+  },
+  handler: async (ctx: any, args: any) => {
+    const sessionToken = args.sessionToken.trim();
+    if (!sessionToken) {
+      throw new Error('sessionToken 不能为空');
+    }
+
+    const user = await validateSession({ db: ctx.db }, sessionToken);
+    if (!user) {
+      throw new Error('会话无效或已过期');
+    }
+
+    const tokenDoc = await ctx.db.get(args.botTokenId);
+    if (!tokenDoc) {
+      throw new Error('botToken 不存在');
+    }
+    if (!tokenDoc.userId || tokenDoc.userId !== user.userId) {
+      throw new Error('无权操作该 botToken');
+    }
+
+    const world = await ctx.db.get(tokenDoc.worldId);
+    if (!world) {
+      throw new Error('世界不存在');
+    }
+
+    const activeConversation = world.conversations.find((conversation: any) => {
+      if (!conversation || !Array.isArray(conversation.participants)) {
+        return false;
+      }
+      return conversation.participants.some(
+        (member: any) =>
+          member?.playerId === tokenDoc.playerId && member?.status?.kind === 'participating',
+      );
+    });
+
+    if (!activeConversation || typeof activeConversation.id !== 'string') {
+      throw new Error('该 NPC 当前不在进行中的对话中');
+    }
+
+    const inputId = await insertInput(ctx, tokenDoc.worldId, 'leaveConversation' as any, {
+      playerId: tokenDoc.playerId,
+      conversationId: activeConversation.id,
+    } as any);
+
+    return {
+      inputId,
+      conversationId: activeConversation.id,
+      playerId: tokenDoc.playerId,
+    };
+  },
+});
+
 export const getNpcToken = query({
   args: {
     sessionToken: v.string(),
@@ -554,6 +611,47 @@ export const postNpcResetToken = httpAction(async (ctx: any, request: Request) =
       return badRequest('NOT_FOUND', message, request);
     }
     return internalError('RESET_FAILED', '重置 token 失败，请稍后重试', request);
+  }
+});
+
+export const postNpcInterrupt = httpAction(async (ctx: any, request: Request) => {
+  const sessionToken = extractSessionToken(request);
+  if (!sessionToken) {
+    return unauthorized('AUTH_FAILED', 'Missing session token', request);
+  }
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return badRequest('INVALID_JSON', 'Request body is not valid JSON', request);
+  }
+
+  if (!body || typeof body !== 'object' || typeof body.botTokenId !== 'string') {
+    return badRequest('INVALID_ARGS', 'Missing botTokenId', request);
+  }
+
+  try {
+    const result = await ctx.runMutation((api as any).npcService.interruptNpcConversation, {
+      sessionToken,
+      botTokenId: body.botTokenId,
+    });
+    return jsonResponse({ ok: true, ...result }, undefined, request);
+  } catch (e: unknown) {
+    const message = toErrorMessage(e, '打断对话失败');
+    if (message.includes('会话无效') || message.includes('已过期')) {
+      return unauthorized('AUTH_FAILED', '会话无效或已过期', request);
+    }
+    if (message.includes('无权')) {
+      return forbidden('FORBIDDEN', message, request);
+    }
+    if (message.includes('不在进行中的对话')) {
+      return badRequest('NO_ACTIVE_CONVERSATION', message, request);
+    }
+    if (message.includes('不存在')) {
+      return badRequest('NOT_FOUND', message, request);
+    }
+    return internalError('INTERRUPT_FAILED', '打断对话失败，请稍后重试', request);
   }
 });
 

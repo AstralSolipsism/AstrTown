@@ -15,6 +15,8 @@ import { modalStyles } from './modalStyles';
 import PersonalityModal from './PersonalityModal';
 import RelationshipModal from './RelationshipModal';
 import ActionQueueModal from './ActionQueueModal';
+import { useNpcService } from '../hooks/useNpcService.tsx';
+import { useAuth } from '../hooks/useAuth.tsx';
 
 export default function PlayerDetails({
   worldId,
@@ -33,6 +35,7 @@ export default function PlayerDetails({
 }) {
   const { t } = useTranslation();
   const humanTokenIdentifier = useQuery(api.world.userStatus, { worldId });
+  const { user } = useAuth();
 
   const players = [...game.world.players.values()];
   const humanPlayer = players.find((p) => p.human === humanTokenIdentifier);
@@ -61,6 +64,7 @@ export default function PlayerDetails({
   const [relationshipModalOpen, setRelationshipModalOpen] = useState(false);
   const [actionQueueModalOpen, setActionQueueModalOpen] = useState(false);
   const [recentConversationExpanded, setRecentConversationExpanded] = useState(false);
+  const [isInterruptingNpc, setIsInterruptingNpc] = useState(false);
 
   const socialState = useQuery(
     api.social.getPublicSocialState,
@@ -115,6 +119,16 @@ export default function PlayerDetails({
   const acceptInvite = useSendInput(engineId, 'acceptInvite');
   const rejectInvite = useSendInput(engineId, 'rejectInvite');
   const leaveConversation = useSendInput(engineId, 'leaveConversation');
+  const { npcs, refreshList, interruptNpc } = useNpcService();
+
+  useEffect(() => {
+    if (!user || !isExternalControlledNpc || npcs.length > 0) {
+      return;
+    }
+    void refreshList().catch(() => {
+      // 鉴权失败或网络异常时保持静默，前端按钮会基于可用列表回退为不显示。
+    });
+  }, [isExternalControlledNpc, npcs.length, refreshList, user]);
 
   if (!playerId) {
     return (
@@ -191,6 +205,24 @@ export default function PlayerDetails({
     );
   };
 
+  const onInterruptNpcConversation = async () => {
+    if (!player || !isExternalControlledNpc || isInterruptingNpc) {
+      return;
+    }
+    const managedNpc = npcs.find((item) => item.playerId === player.id);
+    if (!managedNpc) {
+      return;
+    }
+
+    setIsInterruptingNpc(true);
+    try {
+      await toastOnError(interruptNpc(managedNpc.botTokenId));
+      await refreshList();
+    } finally {
+      setIsInterruptingNpc(false);
+    }
+  };
+
   const openNpcHistory = () => setNpcHistoryOpen(true);
   const closeNpcHistory = () => setNpcHistoryOpen(false);
   const openPersonalityModal = () => setPersonalityModalOpen(true);
@@ -223,11 +255,17 @@ export default function PlayerDetails({
   const canOpenRelationship = !isMe;
   const canOpenActionQueue = isExternalControlledNpc && !!playerAgent;
   const canOpenConversationHistory = isExternalControlledNpc;
+  const managedNpc = player ? npcs.find((item) => item.playerId === player.id) : undefined;
+  const canInterruptNpcConversation =
+    !!managedNpc &&
+    !!playerConversation &&
+    playerConversation.participants.get(player.id)?.status.kind === 'participating';
   const hasEntryActions =
     canOpenPersonality ||
     canOpenRelationship ||
     canOpenActionQueue ||
-    canOpenConversationHistory;
+    canOpenConversationHistory ||
+    canInterruptNpcConversation;
   const hasKeyInfo =
     (!playerConversation && player.activity && player.activity.until > Date.now()) ||
     (!isMe && playerConversation && playerStatus?.kind === 'participating') ||
@@ -457,6 +495,24 @@ export default function PlayerDetails({
                     <span className="text-2xl leading-none">🕘</span>
                     <span className="text-sm leading-tight sm:text-base">
                       {t('playerDetails.entryButtons.conversationHistory')}
+                    </span>
+                  </span>
+                </div>
+              </a>
+            )}
+
+            {canInterruptNpcConversation && (
+              <a
+                className="button w-full text-white shadow-solid text-xl cursor-pointer pointer-events-auto"
+                onClick={onInterruptNpcConversation}
+              >
+                <div className="h-full rounded-md bg-clay-700 px-2 py-2 text-center transition-colors hover:bg-brown-700 sm:px-3 sm:py-3">
+                  <span className="flex flex-col items-center justify-center gap-1">
+                    <span className="text-2xl leading-none">⛔</span>
+                    <span className="text-sm leading-tight sm:text-base">
+                      {isInterruptingNpc
+                        ? t('playerDetails.entryButtons.interruptingConversation')
+                        : t('playerDetails.entryButtons.interruptConversation')}
                     </span>
                   </span>
                 </div>

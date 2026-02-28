@@ -69,6 +69,8 @@ const zhCN = {
       relationship: '关系信息',
       actionQueue: '行动队列',
       conversationHistory: '对话历史',
+      interruptConversation: '打断对话',
+      interruptingConversation: '打断中...',
     },
     personalityModal: {
       modalLabel: '人格信息弹窗',
