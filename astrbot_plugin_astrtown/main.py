@@ -631,7 +631,10 @@ class AstrTownPlugin(Star):
         elif sub == "status":
             reply = await self.user_cmd_handler.handle_status(event)
         elif sub == "nearby":
-            reply = await self.user_cmd_handler.handle_nearby(event)
+            if len(parts) > 1:
+                reply = "参数错误：/astrtown nearby 不接受参数。请先 /astrtown bind <角色ID> 后再执行。"
+            else:
+                reply = await self.user_cmd_handler.handle_nearby(event)
         elif sub == "relations":
             reply = await self.user_cmd_handler.handle_relations(event)
         elif sub == "do":

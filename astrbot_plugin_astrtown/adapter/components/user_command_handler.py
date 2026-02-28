@@ -335,21 +335,30 @@ class UserCommandHandler:
 
         return self._format_command_ack("取消指令已下发", ack)
 
-    def _find_adapter_by_player_id(self, player_id: str) -> AstrTownAdapter | None:
+    def _find_adapter_by_player_id(self, player_id: str) -> Any | None:
         pid = str(player_id or "").strip()
         if not pid:
             return None
 
         for inst in self._iter_registered_adapters():
-            bind = inst.get_binding()
+            get_binding = getattr(inst, "get_binding", None)
+            if not callable(get_binding):
+                continue
+
+            try:
+                bind_raw = get_binding()
+            except Exception:
+                continue
+
+            bind = bind_raw if isinstance(bind_raw, dict) else {}
             inst_player_id = str(bind.get("playerId") or "").strip()
             if inst_player_id and inst_player_id == pid:
                 return inst
 
         return None
 
-    def _iter_registered_adapters(self) -> list[AstrTownAdapter]:
-        adapters: list[AstrTownAdapter] = []
+    def _iter_registered_adapters(self) -> list[Any]:
+        adapters: list[Any] = []
         seen: set[int] = set()
 
         context = self._context
@@ -358,7 +367,7 @@ class UserCommandHandler:
             platform_insts = getattr(platform_manager, "platform_insts", None) if platform_manager is not None else None
             if isinstance(platform_insts, list):
                 for inst in platform_insts:
-                    if not isinstance(inst, AstrTownAdapter):
+                    if not self._is_astrtown_adapter_instance(inst):
                         continue
                     inst_key = id(inst)
                     if inst_key in seen:
@@ -366,7 +375,7 @@ class UserCommandHandler:
                     seen.add(inst_key)
                     adapters.append(inst)
 
-        if self.adapter is not None:
+        if self.adapter is not None and self._is_astrtown_adapter_instance(self.adapter):
             current_key = id(self.adapter)
             if current_key not in seen:
                 seen.add(current_key)
@@ -374,44 +383,98 @@ class UserCommandHandler:
 
         return adapters
 
-    def _collect_registered_roles(self) -> list[dict[str, str]]:
-        roles: list[dict[str, str]] = []
+    @staticmethod
+    def _is_astrtown_adapter_instance(inst: Any) -> bool:
+        if inst is None:
+            return False
+
+        meta_func = getattr(inst, "meta", None)
+        get_binding = getattr(inst, "get_binding", None)
+        if not callable(meta_func) or not callable(get_binding):
+            return False
+
+        try:
+            meta = meta_func()
+        except Exception:
+            return False
+
+        meta_name = str(getattr(meta, "name", "") or "").strip()
+        return meta_name == "astrtown"
+
+    def _collect_registered_roles(self) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+        ready_roles: list[dict[str, str]] = []
+        pending_platforms: list[dict[str, str]] = []
+
         for inst in self._iter_registered_adapters():
-            bind = inst.get_binding()
+            platform_id = ""
+            try:
+                platform_id = str(inst.meta().id or "").strip()
+            except Exception:
+                platform_id = ""
+
+            bind: dict[str, Any] = {}
+            get_binding = getattr(inst, "get_binding", None)
+            if callable(get_binding):
+                try:
+                    bind_raw = get_binding()
+                    if isinstance(bind_raw, dict):
+                        bind = bind_raw
+                except Exception:
+                    bind = {}
+
             player_id = str(bind.get("playerId") or "").strip()
-            if not player_id:
+            player_name = str(bind.get("playerName") or "").strip()
+
+            if player_id:
+                ready_roles.append(
+                    {
+                        "platform_id": platform_id,
+                        "player_id": player_id,
+                        "player_name": player_name,
+                    }
+                )
                 continue
 
-            player_name = str(bind.get("playerName") or "").strip()
-            platform_id = str(inst.meta().id or "").strip()
-            roles.append(
+            pending_platforms.append(
                 {
-                    "platform_id": platform_id,
-                    "player_id": player_id,
-                    "player_name": player_name,
+                    "platform_id": platform_id or "未配置平台ID",
                 }
             )
 
-        return roles
+        return ready_roles, pending_platforms
 
     def _format_registered_role_list(self) -> str:
-        roles = self._collect_registered_roles()
-        if not roles:
-            return "当前没有可绑定角色。请确认 AstrTown 适配器已连接并完成鉴权。"
+        ready_roles, pending_platforms = self._collect_registered_roles()
+        if not ready_roles and not pending_platforms:
+            return "当前没有可绑定角色。请确认 AstrTown 适配器已加载。"
 
-        lines = [
-            "可绑定角色列表：",
-            "使用方式：/astrtown bind <角色ID>",
-        ]
-        for item in roles:
-            player_name = item.get("player_name") or "未命名角色"
-            player_id = item.get("player_id") or ""
-            platform_id = item.get("platform_id") or "未配置平台ID"
-            lines.append(f"- {player_name} | 角色ID: {player_id} | 连接: {platform_id}")
+        lines: list[str] = []
+        if ready_roles:
+            lines.extend(
+                [
+                    "可绑定角色列表：",
+                    "使用方式：/astrtown bind <角色ID>",
+                ]
+            )
+            for item in ready_roles:
+                player_name = item.get("player_name") or "未命名角色"
+                player_id = item.get("player_id") or ""
+                platform_id = item.get("platform_id") or "未配置平台ID"
+                lines.append(f"- {player_name} | 角色ID: {player_id} | 连接: {platform_id}")
+        else:
+            lines.append("当前暂无可直接绑定的角色ID。")
+
+        if pending_platforms:
+            lines.append("")
+            lines.append("以下 AstrTown 连接已加载但尚未完成鉴权（playerId 为空）：")
+            for item in pending_platforms:
+                platform_id = item.get("platform_id") or "未配置平台ID"
+                lines.append(f"- 连接: {platform_id}")
+            lines.append("请检查 astrtown_token，并确认日志出现 authenticated agentId=... playerId=...。")
 
         return "\n".join(lines)
 
-    def _resolve_bound_adapter(self, binding: dict[str, str]) -> AstrTownAdapter | None:
+    def _resolve_bound_adapter(self, binding: dict[str, str]) -> Any | None:
         platform_id = str(binding.get("platform_id") or "").strip()
         if not platform_id:
             return None
@@ -421,12 +484,16 @@ class UserCommandHandler:
             get_platform_inst = getattr(context, "get_platform_inst", None)
             if callable(get_platform_inst):
                 inst = get_platform_inst(platform_id)
-                if isinstance(inst, AstrTownAdapter):
+                if self._is_astrtown_adapter_instance(inst):
                     return inst
 
         if self.adapter is not None:
             current_id = str(self.adapter.meta().id or "").strip()
-            if current_id and current_id == platform_id:
+            if (
+                current_id
+                and current_id == platform_id
+                and self._is_astrtown_adapter_instance(self.adapter)
+            ):
                 return self.adapter
 
         return None
