@@ -8,7 +8,7 @@ import { toastOnError } from '../toasts';
 import { useSendInput } from '../hooks/sendInput';
 import { GameId } from '../../convex/aiTown/ids';
 import { ServerGame } from '../hooks/serverGame';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import NpcHistoryDrawer from './NpcHistoryDrawer';
 import { modalStyles } from './modalStyles';
@@ -60,6 +60,7 @@ export default function PlayerDetails({
   const [personalityModalOpen, setPersonalityModalOpen] = useState(false);
   const [relationshipModalOpen, setRelationshipModalOpen] = useState(false);
   const [actionQueueModalOpen, setActionQueueModalOpen] = useState(false);
+  const [recentConversationExpanded, setRecentConversationExpanded] = useState(false);
 
   const socialState = useQuery(
     api.social.getPublicSocialState,
@@ -71,6 +72,10 @@ export default function PlayerDetails({
         }
       : 'skip',
   );
+
+  useEffect(() => {
+    setRecentConversationExpanded(false);
+  }, [playerId, previousConversation?.id]);
 
   const relationshipBadge = useMemo(() => {
     const status = socialState?.relationship?.status;
@@ -194,6 +199,8 @@ export default function PlayerDetails({
   const closeRelationshipModal = () => setRelationshipModalOpen(false);
   const openActionQueueModal = () => setActionQueueModalOpen(true);
   const closeActionQueueModal = () => setActionQueueModalOpen(false);
+  const toggleRecentConversationExpanded = () =>
+    setRecentConversationExpanded((expanded) => !expanded);
   // const pendingSuffix = (inputName: string) =>
   //   [...inflightInputs.values()].find((i) => i.name === inputName) ? ' opacity-50' : '';
 
@@ -284,18 +291,33 @@ export default function PlayerDetails({
           {!playerConversation && previousConversation && (
             <>
               <div className="box flex-grow">
-                <h2 className="bg-brown-700 text-base sm:text-lg text-center">
-                  {t('playerDetails.sections.recentConversation')}
-                </h2>
+                <div className="bg-brown-700 flex items-center justify-between px-3 py-1">
+                  <h2 className="flex-1 text-base sm:text-lg text-center">
+                    {t('playerDetails.sections.recentConversation')}
+                  </h2>
+                  <button
+                    type="button"
+                    className="text-sm text-white/90 hover:text-white"
+                    onClick={toggleRecentConversationExpanded}
+                    aria-expanded={recentConversationExpanded}
+                    aria-label={
+                      recentConversationExpanded ? t('npcHistory.collapse') : t('npcHistory.expand')
+                    }
+                  >
+                    {recentConversationExpanded ? t('npcHistory.collapse') : t('npcHistory.expand')}
+                  </button>
+                </div>
               </div>
-              <Messages
-                worldId={worldId}
-                engineId={engineId}
-                inConversationWithMe={false}
-                conversation={{ kind: 'archived', doc: previousConversation }}
-                humanPlayer={humanPlayer}
-                scrollViewRef={scrollViewRef}
-              />
+              {recentConversationExpanded && (
+                <Messages
+                  worldId={worldId}
+                  engineId={engineId}
+                  inConversationWithMe={false}
+                  conversation={{ kind: 'archived', doc: previousConversation }}
+                  humanPlayer={humanPlayer}
+                  scrollViewRef={scrollViewRef}
+                />
+              )}
             </>
           )}
         </div>
