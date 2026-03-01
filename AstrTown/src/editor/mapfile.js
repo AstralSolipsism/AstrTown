@@ -248,9 +248,13 @@ export function generate_level_file() {
     const object_instances = Array.isArray(semanticSnapshot?.objectInstances)
         ? semanticSnapshot.objectInstances
         : (g_ctx.semantic?.placer?.getObjectInstances?.() ?? []);
-    const zones = Array.isArray(semanticSnapshot?.zones)
+    const rawZones = Array.isArray(semanticSnapshot?.zones)
         ? semanticSnapshot.zones
         : (g_ctx.semantic?.zoner?.getZones?.() ?? []);
+    const zones = rawZones.map((zone) => ({
+        ...zone,
+        editedAt: Number.isFinite(Number(zone?.editedAt)) ? Number(zone.editedAt) : Date.now(),
+    }));
 
     write_map_file(tile_array0, tile_array1, tile_array2, tile_array3, animated_tiles, object_instances, zones);
 }

@@ -87,6 +87,7 @@ function buildCoordinateIndex(
   mapWidth: number,
   mapHeight: number,
 ) {
+  const PIXELS_PER_TILE = 32;
   const normalizedWidth = Math.max(0, Math.trunc(mapWidth));
   const normalizedHeight = Math.max(0, Math.trunc(mapHeight));
   if (normalizedWidth === 0 || normalizedHeight === 0) {
@@ -101,15 +102,16 @@ function buildCoordinateIndex(
   const index: Record<string, { zoneId: string; zoneName: string; priority: number }> = {};
 
   for (const zone of zones) {
-    const rawStartX = Math.trunc(zone.bounds.x);
-    const rawStartY = Math.trunc(zone.bounds.y);
-    const rawWidth = Math.max(0, Math.trunc(zone.bounds.width));
-    const rawHeight = Math.max(0, Math.trunc(zone.bounds.height));
+    // 编辑器中的区域边界是像素坐标，这里统一转换为格子坐标后再参与索引计算。
+    const rawStartX = Math.floor(zone.bounds.x / PIXELS_PER_TILE);
+    const rawStartY = Math.floor(zone.bounds.y / PIXELS_PER_TILE);
+    const rawWidth = Math.max(0, Math.floor(zone.bounds.width / PIXELS_PER_TILE));
+    const rawHeight = Math.max(0, Math.floor(zone.bounds.height / PIXELS_PER_TILE));
 
-    const startX = Math.max(0, rawStartX);
-    const startY = Math.max(0, rawStartY);
-    const endX = Math.min(normalizedWidth, rawStartX + rawWidth);
-    const endY = Math.min(normalizedHeight, rawStartY + rawHeight);
+    const startX = Math.max(0, Math.min(normalizedWidth, rawStartX));
+    const startY = Math.max(0, Math.min(normalizedHeight, rawStartY));
+    const endX = Math.max(startX, Math.min(normalizedWidth, rawStartX + rawWidth));
+    const endY = Math.max(startY, Math.min(normalizedHeight, rawStartY + rawHeight));
 
     if (endX <= startX || endY <= startY) {
       continue;
@@ -414,6 +416,7 @@ export const addZone = mutation({
     name: v.string(),
     description: v.string(),
     priority: v.number(),
+    editedAt: v.optional(v.number()),
     bounds: zoneBounds,
     suggestedActivities: v.optional(v.array(v.string())),
     containedInstanceIds: v.optional(v.array(v.string())),
@@ -426,6 +429,7 @@ export const addZone = mutation({
       name: args.name,
       description: args.description,
       priority: args.priority,
+      editedAt: args.editedAt ?? Date.now(),
       bounds: args.bounds,
       suggestedActivities: args.suggestedActivities,
       containedInstanceIds: args.containedInstanceIds,
@@ -467,6 +471,7 @@ export const updateZone = mutation({
     name: v.optional(v.string()),
     description: v.optional(v.string()),
     priority: v.optional(v.number()),
+    editedAt: v.optional(v.number()),
     bounds: v.optional(zoneBounds),
     suggestedActivities: v.optional(v.array(v.string())),
     containedInstanceIds: v.optional(v.array(v.string())),
@@ -488,6 +493,9 @@ export const updateZone = mutation({
       ...(args.name !== undefined ? { name: args.name } : {}),
       ...(args.description !== undefined ? { description: args.description } : {}),
       ...(args.priority !== undefined ? { priority: args.priority } : {}),
+      ...(args.editedAt !== undefined
+        ? { editedAt: args.editedAt }
+        : { editedAt: currentZone.editedAt ?? 0 }),
       ...(args.bounds !== undefined ? { bounds: args.bounds } : {}),
       ...(args.suggestedActivities !== undefined
         ? { suggestedActivities: args.suggestedActivities }
@@ -564,12 +572,19 @@ export const getSemanticSnapshot = query({
     const catalogByKey = new Map<string, any>(enabledCatalogs.map((item: any) => [item.key, item]));
 
     const zoneCards = [...zones]
-      .sort((a: any, b: any) => b.priority - a.priority)
+      .sort((a: any, b: any) => {
+        const priorityDelta = (Number(b?.priority) || 0) - (Number(a?.priority) || 0);
+        if (priorityDelta !== 0) {
+          return priorityDelta;
+        }
+        return (Number(b?.editedAt) || 0) - (Number(a?.editedAt) || 0);
+      })
       .map((zone: any) => ({
         zoneId: zone.zoneId,
         name: zone.name,
         description: zone.description,
         priority: zone.priority,
+        editedAt: Number(zone.editedAt) || 0,
         bounds: zone.bounds,
         suggestedActivities: zone.suggestedActivities ?? [],
       }));

@@ -65,12 +65,14 @@ function normalizeZone(raw, tileDim, editOrder) {
   const source = raw || {};
   const bounds = normalizeBounds(source.bounds, tileDim);
   const priorityNumber = Number(source.priority);
+  const editedAtNumber = Number(source.editedAt);
 
   return {
     zoneId: String(source.zoneId || createZoneId()),
     name: String(source.name || '未命名区域').trim() || '未命名区域',
     description: String(source.description || '').trim(),
     priority: Number.isFinite(priorityNumber) ? priorityNumber : 0,
+    editedAt: Number.isFinite(editedAtNumber) ? editedAtNumber : Date.now(),
     bounds,
     suggestedActivities: normalizeActivities(source.suggestedActivities),
     containedInstanceIds: normalizeContainedInstanceIds(source.containedInstanceIds),
@@ -93,6 +95,7 @@ function copyZoneForOutput(zone) {
     name: zone.name,
     description: zone.description,
     priority: zone.priority,
+    editedAt: Number.isFinite(Number(zone.editedAt)) ? Number(zone.editedAt) : Date.now(),
     bounds: cloneBounds(zone.bounds),
   };
 
@@ -281,6 +284,7 @@ export function createSemanticZoner(g_ctx, options = {}) {
       return;
     }
     zone._editOrder = nextEditOrder();
+    zone.editedAt = Date.now();
   }
 
   function setZones(zones) {
@@ -345,6 +349,7 @@ export function createSemanticZoner(g_ctx, options = {}) {
       name: zoneDraft.name,
       description: zoneDraft.description,
       priority: zoneDraft.priority,
+      editedAt: Date.now(),
       suggestedActivities: zoneDraft.suggestedActivities,
       containedInstanceIds: zoneDraft.containedInstanceIds,
       bounds: bounds || { x: 0, y: 0, width: tileDim, height: tileDim },

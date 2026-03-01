@@ -99,12 +99,14 @@ function normalizeZoneFromModule(rawZone) {
   const zone = rawZone || {};
   const bounds = zone.bounds || {};
   const priority = Number(zone.priority);
+  const editedAt = Number(zone.editedAt);
 
   return {
     zoneId: zone.zoneId,
     name: String(zone.name || '未命名区域'),
     description: String(zone.description || ''),
     priority: Number.isFinite(priority) ? priority : 0,
+    editedAt: Number.isFinite(editedAt) ? editedAt : Date.now(),
     bounds: {
       x: Number(bounds.x) || 0,
       y: Number(bounds.y) || 0,

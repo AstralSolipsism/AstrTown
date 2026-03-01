@@ -25,6 +25,7 @@ export const semanticZone = v.object({
   name: v.string(),
   description: v.string(),
   priority: v.number(),
+  editedAt: v.number(),
   bounds: zoneBounds,
   suggestedActivities: v.optional(v.array(v.string())),
   containedInstanceIds: v.optional(v.array(v.string())),
