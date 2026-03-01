@@ -71,6 +71,37 @@ async function getOrCreateDefaultWorld(ctx: MutationCtx) {
     objectTiles: map.objmap,
     animatedSprites: map.animatedsprites,
   });
+
+  const objectInstances = (map as any).objectInstances;
+  const zones = (map as any).zones;
+  const hasSemanticData = Array.isArray(objectInstances) || Array.isArray(zones);
+
+  if (hasSemanticData) {
+    const nextObjectInstances = Array.isArray(objectInstances) ? objectInstances : [];
+    const nextZones = Array.isArray(zones) ? zones : [];
+    const existingSemantic = await ctx.db
+      .query('worldSemantic')
+      .withIndex('worldId', (q) => q.eq('worldId', worldId))
+      .unique();
+
+    if (existingSemantic) {
+      await ctx.db.patch(existingSemantic._id, {
+        objectInstances: nextObjectInstances,
+        zones: nextZones,
+        updatedAt: Date.now(),
+        version: existingSemantic.version + 1,
+      });
+    } else {
+      await ctx.db.insert('worldSemantic', {
+        worldId,
+        version: 1,
+        updatedAt: Date.now(),
+        objectInstances: nextObjectInstances,
+        zones: nextZones,
+      });
+    }
+  }
+
   await ctx.scheduler.runAfter(0, internal.aiTown.main.runStep, {
     worldId,
     generationNumber: engine.generationNumber,
