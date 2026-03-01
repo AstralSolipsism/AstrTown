@@ -1,4 +1,5 @@
 import { createSemanticPlacer } from './semanticplacer.js';
+import { createSemanticZoner } from './semanticzoner.js';
 import { mapObjectCatalog as seedCatalog } from '../../data/mapObjectCatalog.js';
 
 const DEFAULT_FORM = {
@@ -9,6 +10,13 @@ const DEFAULT_FORM = {
   interactionHint: '',
   occupiedTiles: '0,0',
   blocksMovement: true,
+};
+
+const DEFAULT_ZONE_FORM = {
+  name: '',
+  description: '',
+  priority: '0',
+  activities: '',
 };
 
 function cloneCatalogItem(item) {
@@ -69,6 +77,56 @@ function occupiedTilesToText(occupiedTiles) {
   return occupiedTiles.map((item) => `${item.dx},${item.dy}`).join('\n');
 }
 
+function parseSuggestedActivities(text) {
+  if (typeof text !== 'string') {
+    return [];
+  }
+
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function suggestedActivitiesToText(activities) {
+  if (!Array.isArray(activities) || activities.length === 0) {
+    return '';
+  }
+  return activities.join('\n');
+}
+
+function normalizeZoneFromModule(rawZone) {
+  const zone = rawZone || {};
+  const bounds = zone.bounds || {};
+  const priority = Number(zone.priority);
+
+  return {
+    zoneId: zone.zoneId,
+    name: String(zone.name || '未命名区域'),
+    description: String(zone.description || ''),
+    priority: Number.isFinite(priority) ? priority : 0,
+    bounds: {
+      x: Number(bounds.x) || 0,
+      y: Number(bounds.y) || 0,
+      width: Math.max(1, Number(bounds.width) || 1),
+      height: Math.max(1, Number(bounds.height) || 1),
+    },
+    suggestedActivities: Array.isArray(zone.suggestedActivities)
+      ? zone.suggestedActivities.map((item) => String(item || '').trim()).filter((item) => item.length > 0)
+      : [],
+    containedInstanceIds: Array.isArray(zone.containedInstanceIds)
+      ? zone.containedInstanceIds.map((item) => String(item || '').trim()).filter((item) => item.length > 0)
+      : [],
+  };
+}
+
+function pointInBounds(x, y, bounds) {
+  return x >= bounds.x
+    && x < bounds.x + bounds.width
+    && y >= bounds.y
+    && y < bounds.y + bounds.height;
+}
+
 function loadCatalogFromDataFile() {
   if (Array.isArray(seedCatalog) && seedCatalog.length > 0) {
     return seedCatalog.map((item) => cloneCatalogItem(item));
@@ -119,10 +177,18 @@ export async function initSemanticUI(g_ctx, options = {}) {
   const panelBody = document.getElementById('semantic-panel-body');
   const togglePanelBtn = document.getElementById('semantic-toggle-panel');
   const placementBtn = document.getElementById('semantic-placement-toggle');
+  const zoneToggleBtn = document.getElementById('semantic-zone-toggle');
   const placementStatus = document.getElementById('semantic-placement-status');
   const newBtn = document.getElementById('semantic-new-object');
   const deleteBtn = document.getElementById('semantic-delete-object');
   const resetBtn = document.getElementById('semantic-reset-form');
+
+  const zoneForm = document.getElementById('semantic-zone-form');
+  const zoneListEl = document.getElementById('semantic-zone-list');
+  const zoneNewBtn = document.getElementById('semantic-new-zone');
+  const zoneDeleteBtn = document.getElementById('semantic-delete-zone');
+  const zoneResetBtn = document.getElementById('semantic-reset-zone-form');
+  const zonePrimaryEl = document.getElementById('semantic-zone-primary');
 
   const fields = {
     key: document.getElementById('semantic-key'),
@@ -134,10 +200,17 @@ export async function initSemanticUI(g_ctx, options = {}) {
     blocksMovement: document.getElementById('semantic-blocks-movement'),
   };
 
+  const zoneFields = {
+    name: document.getElementById('semantic-zone-name'),
+    description: document.getElementById('semantic-zone-description'),
+    priority: document.getElementById('semantic-zone-priority'),
+    activities: document.getElementById('semantic-zone-activities'),
+  };
+
   const state = {
     catalog: loadCatalogFromDataFile(),
     selectedCatalogKey: null,
-    placementEnabled: false,
+    mode: 'normal',
     panelCollapsed: false,
     worldSemantic: {
       objectInstances: [],
@@ -155,17 +228,164 @@ export async function initSemanticUI(g_ctx, options = {}) {
     initialZones: state.worldSemantic.zones,
     onInstancesChanged(instances) {
       state.worldSemantic.objectInstances = instances.slice();
+      syncZoneContainedInstanceIds(instances);
+      refreshPrimaryZoneText();
     },
   });
 
-  function setPlacementStatus() {
-    if (state.placementEnabled) {
+  const zoner = createSemanticZoner(g_ctx, {
+    initialZones: state.worldSemantic.zones,
+    getDraftZoneData() {
+      return readZoneForm();
+    },
+    onZonesChanged(zones) {
+      state.worldSemantic.zones = zones.slice();
+      syncZoneContainedInstanceIds(state.worldSemantic.objectInstances);
+      renderZoneList();
+      refreshPrimaryZoneText();
+    },
+    onSelectZone(zoneId, zone) {
+      if (zoneId && zone) {
+        fillZoneFormFromZone(zone);
+      }
+      renderZoneList();
+      refreshPrimaryZoneText();
+    },
+  });
+
+  function setMode(mode) {
+    state.mode = mode;
+    const objectMode = mode === 'object';
+    const zoneMode = mode === 'zone';
+
+    g_ctx.semanticMode = objectMode || zoneMode;
+
+    placer.setPlacementEnabled(objectMode);
+    zoner.setDrawingEnabled(zoneMode);
+
+    if (objectMode) {
       placementBtn.textContent = '关闭放置模式';
+      zoneToggleBtn.textContent = '开启区域模式';
       placementStatus.textContent = '当前：物体放置模式';
+    } else if (zoneMode) {
+      placementBtn.textContent = '开启放置模式';
+      zoneToggleBtn.textContent = '关闭区域模式';
+      placementStatus.textContent = '当前：区域绘制模式';
     } else {
       placementBtn.textContent = '开启放置模式';
+      zoneToggleBtn.textContent = '开启区域模式';
       placementStatus.textContent = '当前：普通绘制模式';
     }
+  }
+
+  function syncZoneContainedInstanceIds(instances) {
+    const currentZones = zoner.getZones();
+    const mapByZone = {};
+
+    for (let i = 0; i < currentZones.length; i++) {
+      mapByZone[currentZones[i].zoneId] = [];
+    }
+
+    for (let i = 0; i < instances.length; i++) {
+      const instance = instances[i];
+      for (let z = 0; z < currentZones.length; z++) {
+        const zone = currentZones[z];
+        if (pointInBounds(instance.x, instance.y, zone.bounds)) {
+          mapByZone[zone.zoneId].push(instance.instanceId);
+        }
+      }
+    }
+
+    zoner.setContainedInstanceIds(mapByZone);
+    state.worldSemantic.zones = zoner.getZones();
+    placer.setZones(state.worldSemantic.zones);
+  }
+
+  function fillZoneForm(formData) {
+    const activities = typeof formData.activities === 'string'
+      ? formData.activities
+      : suggestedActivitiesToText(formData.suggestedActivities);
+
+    zoneFields.name.value = formData.name || '';
+    zoneFields.description.value = formData.description || '';
+    zoneFields.priority.value = String(Number.isFinite(Number(formData.priority)) ? Number(formData.priority) : 0);
+    zoneFields.activities.value = activities || '';
+  }
+
+  function resetZoneForm() {
+    fillZoneForm(DEFAULT_ZONE_FORM);
+  }
+
+  function readZoneForm() {
+    return {
+      name: zoneFields.name.value,
+      description: zoneFields.description.value,
+      priority: zoneFields.priority.value,
+      suggestedActivities: parseSuggestedActivities(zoneFields.activities.value),
+    };
+  }
+
+  function fillZoneFormFromZone(zone) {
+    if (!zone) {
+      resetZoneForm();
+      return;
+    }
+
+    fillZoneForm({
+      name: zone.name || '',
+      description: zone.description || '',
+      priority: Number.isFinite(Number(zone.priority)) ? String(zone.priority) : '0',
+      activities: suggestedActivitiesToText(zone.suggestedActivities),
+    });
+  }
+
+  function renderZoneList() {
+    zoneListEl.innerHTML = '';
+    const zones = zoner.getZones();
+    const selected = zoner.getSelectedZone();
+    const selectedZoneId = selected?.zoneId || null;
+
+    if (zones.length === 0) {
+      const li = document.createElement('li');
+      li.textContent = '暂无区域，请切换区域模式拖拽创建';
+      zoneListEl.appendChild(li);
+      return;
+    }
+
+    for (let i = 0; i < zones.length; i++) {
+      const zone = zones[i];
+      const b = zone.bounds;
+      const li = document.createElement('li');
+      li.style.cursor = 'pointer';
+      li.style.padding = '4px 6px';
+      li.style.margin = '2px 0';
+      li.style.border = '1px solid #555';
+      li.style.background = selectedZoneId === zone.zoneId ? '#fff3bf' : '#fff';
+      li.textContent = `${zone.name} | P${zone.priority} | [${b.x},${b.y},${b.width},${b.height}]`;
+      li.dataset.zoneId = zone.zoneId;
+      li.addEventListener('click', () => {
+        setMode('zone');
+        zoner.selectZone(zone.zoneId);
+        fillZoneFormFromZone(zone);
+      });
+      zoneListEl.appendChild(li);
+    }
+  }
+
+  function refreshPrimaryZoneText() {
+    const selected = zoner.getSelectedZone();
+    if (!selected) {
+      zonePrimaryEl.textContent = '该格子主区域：无';
+      return;
+    }
+
+    const primary = zoner.getPrimaryZoneForZoneCenter(selected.zoneId);
+    if (!primary) {
+      zonePrimaryEl.textContent = '该格子主区域：无';
+      return;
+    }
+
+    zonePrimaryEl.textContent = `该格子主区域：${primary.name} (P${primary.priority})`;
   }
 
   function syncCatalogToGlobal() {
@@ -194,13 +414,10 @@ export async function initSemanticUI(g_ctx, options = {}) {
       li.dataset.key = item.key;
       li.addEventListener('click', () => {
         state.selectedCatalogKey = item.key;
-        state.placementEnabled = true;
-        g_ctx.semanticMode = true;
+        setMode('object');
         placer.setSelectedCatalogKey(item.key);
-        placer.setPlacementEnabled(true);
         fillFormFromCatalog(item);
         renderList();
-        setPlacementStatus();
       });
       listEl.appendChild(li);
     }
@@ -324,6 +541,7 @@ export async function initSemanticUI(g_ctx, options = {}) {
       .filter((instance) => instance.catalogKey !== deletingKey);
     state.worldSemantic.objectInstances = remained;
     placer.setObjectInstances(remained);
+    syncZoneContainedInstanceIds(remained);
 
     state.selectedCatalogKey = null;
     syncCatalogToGlobal();
@@ -339,17 +557,53 @@ export async function initSemanticUI(g_ctx, options = {}) {
   }
 
   function togglePlacement() {
-    state.placementEnabled = !state.placementEnabled;
-    g_ctx.semanticMode = state.placementEnabled;
-    placer.setPlacementEnabled(state.placementEnabled);
-    setPlacementStatus();
+    if (state.mode === 'object') {
+      setMode('normal');
+      return;
+    }
+    setMode('object');
+  }
+
+  function toggleZoneMode() {
+    if (state.mode === 'zone') {
+      setMode('normal');
+      return;
+    }
+    setMode('zone');
   }
 
   function setSemanticModeEnabled(enabled) {
-    state.placementEnabled = !!enabled;
-    g_ctx.semanticMode = state.placementEnabled;
-    placer.setPlacementEnabled(state.placementEnabled);
-    setPlacementStatus();
+    if (enabled) {
+      if (state.mode === 'normal') {
+        setMode('object');
+      } else {
+        setMode(state.mode);
+      }
+      return;
+    }
+    setMode('normal');
+  }
+
+  function saveZoneMeta() {
+    const selected = zoner.getSelectedZone();
+    const payload = readZoneForm();
+
+    if (!selected) {
+      zoner.createZone(payload);
+      renderZoneList();
+      refreshPrimaryZoneText();
+      return;
+    }
+
+    zoner.updateSelectedZoneMeta(payload);
+    renderZoneList();
+    refreshPrimaryZoneText();
+  }
+
+  function deleteSelectedZone() {
+    zoner.deleteSelectedZone();
+    renderZoneList();
+    refreshPrimaryZoneText();
   }
 
   function loadFromMapModule(mod) {
@@ -363,21 +617,26 @@ export async function initSemanticUI(g_ctx, options = {}) {
       y: Number(item.y) || 0,
       note: item.note || '',
     }));
-    state.worldSemantic.zones = zones.map((zone) => ({ ...zone }));
+    state.worldSemantic.zones = zones.map((zone) => normalizeZoneFromModule(zone));
 
     placer.setObjectInstances(state.worldSemantic.objectInstances);
     placer.setZones(state.worldSemantic.zones);
+    zoner.setZones(state.worldSemantic.zones);
+    syncZoneContainedInstanceIds(state.worldSemantic.objectInstances);
+    renderZoneList();
+    refreshPrimaryZoneText();
   }
 
   function getSemanticSnapshot() {
     return {
       objectInstances: placer.getObjectInstances(),
-      zones: placer.getZones(),
+      zones: zoner.getZones(),
     };
   }
 
   togglePanelBtn.addEventListener('click', togglePanel);
   placementBtn.addEventListener('click', togglePlacement);
+  zoneToggleBtn.addEventListener('click', toggleZoneMode);
 
   newBtn.addEventListener('click', () => {
     state.selectedCatalogKey = null;
@@ -388,6 +647,17 @@ export async function initSemanticUI(g_ctx, options = {}) {
   deleteBtn.addEventListener('click', deleteSelectedCatalog);
   resetBtn.addEventListener('click', resetForm);
 
+  zoneNewBtn.addEventListener('click', () => {
+    setMode('zone');
+    zoner.selectZone(null);
+    resetZoneForm();
+    renderZoneList();
+    refreshPrimaryZoneText();
+  });
+
+  zoneDeleteBtn.addEventListener('click', deleteSelectedZone);
+  zoneResetBtn.addEventListener('click', resetZoneForm);
+
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const payload = readForm();
@@ -397,14 +667,25 @@ export async function initSemanticUI(g_ctx, options = {}) {
     upsertCatalogItem(payload);
   });
 
+  zoneForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    saveZoneMeta();
+  });
+
   resetForm();
+  resetZoneForm();
   renderList();
-  setPlacementStatus();
+  renderZoneList();
+  setMode('normal');
 
   placer.init();
+  zoner.init();
+  syncZoneContainedInstanceIds(placer.getObjectInstances());
+  refreshPrimaryZoneText();
 
   return {
     placer,
+    zoner,
     setSemanticModeEnabled,
     loadFromMapModule,
     getSemanticSnapshot,

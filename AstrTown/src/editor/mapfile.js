@@ -244,8 +244,13 @@ export function generate_level_file() {
     }
 
 
-    const object_instances = g_ctx.semantic?.placer?.getObjectInstances?.() ?? [];
-    const zones = g_ctx.semantic?.placer?.getZones?.() ?? [];
+    const semanticSnapshot = g_ctx.semantic?.getSemanticSnapshot?.();
+    const object_instances = Array.isArray(semanticSnapshot?.objectInstances)
+        ? semanticSnapshot.objectInstances
+        : (g_ctx.semantic?.placer?.getObjectInstances?.() ?? []);
+    const zones = Array.isArray(semanticSnapshot?.zones)
+        ? semanticSnapshot.zones
+        : (g_ctx.semantic?.zoner?.getZones?.() ?? []);
 
     write_map_file(tile_array0, tile_array1, tile_array2, tile_array3, animated_tiles, object_instances, zones);
 }

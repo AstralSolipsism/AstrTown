@@ -103,6 +103,7 @@
             </td>
             <td>
                 <button id="semantic-placement-toggle">开启放置模式</button>
+                <button id="semantic-zone-toggle">开启区域模式</button>
                 <span id="semantic-placement-status">当前：普通绘制模式</span>
             </td>
         </tr>
@@ -146,6 +147,41 @@
                             <button id="semantic-reset-form" type="button">重置表单</button>
                         </div>
                     </form>
+                </td>
+            </tr>
+        </table>
+
+        <hr style="margin: 16px 0;" />
+
+        <table width="100%">
+            <tr>
+                <td width="40%" valign="top">
+                    <h3>区域列表</h3>
+                    <ul id="semantic-zone-list" style="min-height: 180px; max-height: 300px; overflow-y: auto; border: 1px solid #333; padding: 8px;"></ul>
+                    <button id="semantic-new-zone" type="button">新建区域</button>
+                    <button id="semantic-delete-zone" type="button">删除选中区域</button>
+                </td>
+                <td width="60%" valign="top">
+                    <h3>区域创建 / 编辑</h3>
+                    <form id="semantic-zone-form">
+                        <div>
+                            <label>名称：<input id="semantic-zone-name" name="zoneName" type="text" required /></label>
+                        </div>
+                        <div>
+                            <label>描述：<textarea id="semantic-zone-description" name="zoneDescription" rows="3" cols="50"></textarea></label>
+                        </div>
+                        <div>
+                            <label>优先级：<input id="semantic-zone-priority" name="zonePriority" type="number" value="0" /></label>
+                        </div>
+                        <div>
+                            <label>推荐活动（每行一个）：<textarea id="semantic-zone-activities" name="zoneActivities" rows="4" cols="50"></textarea></label>
+                        </div>
+                        <div>
+                            <button id="semantic-save-zone" type="submit">保存区域信息</button>
+                            <button id="semantic-reset-zone-form" type="button">重置区域表单</button>
+                        </div>
+                    </form>
+                    <div id="semantic-zone-primary" style="margin-top: 8px; color: #333;">该格子主区域：无</div>
                 </td>
             </tr>
         </table>
