@@ -43,6 +43,8 @@ import * as CONFIG from './leconfig.js'
 import * as UNDO from './undo.js'
 import * as MAPFILE from './mapfile.js'
 import * as UI from './lehtmlui.js'
+import { initSemanticUI } from './semanticui.js';
+import '../../data/mapObjectCatalog.js';
 import { EventSystem } from '@pixi/events';
 
 g_ctx.debug_flag  = true;
@@ -451,6 +453,10 @@ function loadMapFromModuleFinish(mod) {
     g_ctx.g_layers[3] = new LayerContext(g_ctx.g_layer_apps[3], document.getElementById("layer3pane"), 3, mod);
 
     loadAnimatedSpritesFromModule(mod);
+
+    if (g_ctx.semantic && typeof g_ctx.semantic.loadFromMapModule === 'function') {
+        g_ctx.semantic.loadFromMapModule(mod);
+    }
 }
 
 function loadMapFromModule(mod) {
@@ -934,6 +940,10 @@ function onCompositeMousedown(layer, e) {
 }
 
 
+function isSemanticPlacementEnabled() {
+    return g_ctx.semanticMode === true;
+}
+
 // Place with no variable target at destination
 function levelPlaceNoVariable(layer, e) {
     if (g_ctx.debug_flag) {
@@ -967,6 +977,9 @@ function levelPlaceNoVariable(layer, e) {
 // Listen to pointermove on stage once handle is pressed.
 function onLevelPointerDown(layer, e)
 {
+    if (isSemanticPlacementEnabled()) {
+        return;
+    }
     if (g_ctx.debug_flag) {
         console.log("onLevelPointerDown()");
     }
@@ -1021,6 +1034,9 @@ function onLevelDrag(layer, e)
 // Stop dragging feedback once the handle is released.
 function onLevelDragEnd(layer, e)
 {
+    if (isSemanticPlacementEnabled()) {
+        return;
+    }
     layer.dragctx.endx = e.data.global.x;
     layer.dragctx.endy = e.data.global.y;
 
@@ -1356,12 +1372,29 @@ async function init() {
 
     UI.initMainHTMLWindow();
 
-    // We need to load the Tileset to know how to size things. So we block until done. 
-    await initTilesConfig(); 
+    // We need to load the Tileset to know how to size things. So we block until done.
+    await initTilesConfig();
 
     initPixiApps();
     initRadios();
     initTiles();
+
+    g_ctx.semantic = await initSemanticUI(g_ctx);
+
+    const setSemanticMode = (enabled) => {
+        g_ctx.semanticMode = !!enabled;
+        if (g_ctx.semantic && typeof g_ctx.semantic.setSemanticModeEnabled === 'function') {
+            g_ctx.semantic.setSemanticModeEnabled(g_ctx.semanticMode);
+        }
+    };
+
+    setSemanticMode(false);
+
+    window.addEventListener('keydown', (event) => {
+        if (event.code === 'KeyV') {
+            setSemanticMode(!g_ctx.semanticMode);
+        }
+    });
 
     UI.initLevelLoader(loadMapFromModule);
     UI.initCompositePNGLoader();

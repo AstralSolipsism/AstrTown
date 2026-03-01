@@ -22,7 +22,7 @@ const bgtile_string_start = '' +
     'export const bgtiles = [\n' +
     '   [\n'
 
-function write_map_file(bg_tiles_0, bg_tiles_1, obj_tiles_1, obj_tiles_2, animated_tiles){
+function write_map_file(bg_tiles_0, bg_tiles_1, obj_tiles_1, obj_tiles_2, animated_tiles, object_instances = [], zones = []){
     let text = generate_preamble(); 
     text += bgtile_string_start;
 
@@ -92,7 +92,9 @@ function write_map_file(bg_tiles_0, bg_tiles_1, obj_tiles_1, obj_tiles_2, animat
 
     text += '];\n\n';
     text += 'export const mapwidth = bgtiles[0][0].length;\n';
-    text += 'export const mapheight = bgtiles[0].length;\n';
+    text += 'export const mapheight = bgtiles[0].length;\n\n';
+    text += 'export const objectInstances = ' + JSON.stringify(object_instances, null, 2) + ';\n';
+    text += 'export const zones = ' + JSON.stringify(zones, null, 2) + ';\n';
 
     UTIL.download(text, "map.js", "text/plain");
 }
@@ -242,5 +244,8 @@ export function generate_level_file() {
     }
 
 
-    write_map_file(tile_array0, tile_array1, tile_array2, tile_array3, animated_tiles);
+    const object_instances = g_ctx.semantic?.placer?.getObjectInstances?.() ?? [];
+    const zones = g_ctx.semantic?.placer?.getZones?.() ?? [];
+
+    write_map_file(tile_array0, tile_array1, tile_array2, tile_array3, animated_tiles, object_instances, zones);
 }

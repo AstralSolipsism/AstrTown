@@ -21,6 +21,10 @@ var ContextCreate = (function(){
         this.fudgetiles = [];
         this.g_layers = []; // level layers
 
+        // 语义编辑状态
+        this.semantic = null;
+        this.semanticMode = false;
+
     }
 
     var instance;

@@ -15,6 +15,7 @@
         <button class="tablinks" onclick="onTab(event, 'edit')">edit</button>
         <button class="tablinks" onclick="onTab(event, 'map')">map</button>
         <button class="tablinks" onclick="onTab(event, 'config')">config</button>
+        <button class="tablinks" onclick="onTab(event, 'semantic')">semantic</button>
       </div>
 
 <div id="edit" class="tabcontent">
@@ -92,6 +93,63 @@
 
 
             </table>
+</div>
+
+<div id="semantic" class="tabcontent">
+    <table width="100%">
+        <tr>
+            <td>
+                <button id="semantic-toggle-panel">收起面板</button>
+            </td>
+            <td>
+                <button id="semantic-placement-toggle">开启放置模式</button>
+                <span id="semantic-placement-status">当前：普通绘制模式</span>
+            </td>
+        </tr>
+    </table>
+
+    <div id="semantic-panel-body" style="padding-top: 8px;">
+        <table width="100%">
+            <tr>
+                <td width="40%" valign="top">
+                    <h3>物体列表</h3>
+                    <ul id="semantic-object-list" style="min-height: 280px; max-height: 420px; overflow-y: auto; border: 1px solid #333; padding: 8px;"></ul>
+                    <button id="semantic-new-object" type="button">新建物体</button>
+                    <button id="semantic-delete-object" type="button">删除选中</button>
+                </td>
+                <td width="60%" valign="top">
+                    <h3>物体创建 / 编辑</h3>
+                    <form id="semantic-object-form">
+                        <div>
+                            <label>Key：<input id="semantic-key" name="key" type="text" required /></label>
+                        </div>
+                        <div>
+                            <label>名称：<input id="semantic-name" name="name" type="text" required /></label>
+                        </div>
+                        <div>
+                            <label>分类：<input id="semantic-category" name="category" type="text" /></label>
+                        </div>
+                        <div>
+                            <label>描述：<textarea id="semantic-description" name="description" rows="3" cols="50"></textarea></label>
+                        </div>
+                        <div>
+                            <label>交互提示：<input id="semantic-interaction-hint" name="interactionHint" type="text" /></label>
+                        </div>
+                        <div>
+                            <label>占地（每行 dx,dy）：<textarea id="semantic-occupied-tiles" name="occupiedTiles" rows="4" cols="30">0,0</textarea></label>
+                        </div>
+                        <div>
+                            <label><input id="semantic-blocks-movement" name="blocksMovement" type="checkbox" checked /> 阻挡移动</label>
+                        </div>
+                        <div>
+                            <button id="semantic-save-object" type="submit">保存物体</button>
+                            <button id="semantic-reset-form" type="button">重置表单</button>
+                        </div>
+                    </form>
+                </td>
+            </tr>
+        </table>
+    </div>
 </div>
 
 
