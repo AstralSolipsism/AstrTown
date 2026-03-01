@@ -6,6 +6,8 @@ import { serializedAgent } from './agent';
 import { serializedWorld } from './world';
 import { serializedWorldMap } from './worldMap';
 import { serializedConversation } from './conversation';
+import { mapObjectCatalogFields } from './mapObjectCatalog';
+import { worldSemanticFields } from './worldSemantic';
 import { conversationId, playerId } from './ids';
 
 export const aiTownTables = {
@@ -35,6 +37,18 @@ export const aiTownTables = {
     worldId: v.id('worlds'),
     ...serializedPlayerDescription,
   }).index('worldId', ['worldId', 'playerId']),
+
+  // 地图语义层：全局物体目录（跨世界复用）
+  mapObjectCatalog: defineTable({
+    ...mapObjectCatalogFields,
+  })
+    .index('key', ['key'])
+    .index('category', ['category']),
+
+  // 地图语义层：世界级语义实例与区域定义
+  worldSemantic: defineTable({
+    ...worldSemanticFields,
+  }).index('worldId', ['worldId']),
 
   //The game engine doesn't want to track players that have left or conversations that are over, since
   // it wants to keep its managed state small. However, we may want to look at old conversations in the
