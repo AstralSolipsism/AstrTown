@@ -1,6 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 
-import type { AstrTownClient, UpdateDescriptionResponse } from './astrtownClient.js';
+import type {
+  AstrTownClient,
+  GetSemanticSnapshotResponse,
+  UpdateDescriptionResponse,
+} from './astrtownClient.js';
 import type { EventPriority, WsWorldEventBase } from './types.js';
 
 const SUPPORTED_GATEWAY_EVENT_TYPES = new Set<string>([
@@ -298,5 +302,43 @@ export function registerBotHttpProxyRoutes(
       reply.code(500);
       return { ok: false, error: 'Gateway error' };
     }
+  });
+
+  app.get('/api/semantic/:worldId', async (req, reply) => {
+    const auth = req.headers.authorization;
+    if (typeof auth !== 'string' || auth.length === 0) {
+      reply.code(401);
+      return { ok: false, error: 'Missing Authorization header' };
+    }
+
+    const worldId = String((req.params as any)?.worldId ?? '');
+    if (!worldId) {
+      reply.code(400);
+      return { ok: false, error: 'Missing worldId' };
+    }
+
+    let res: GetSemanticSnapshotResponse;
+    try {
+      res = await deps.astr.getSemanticSnapshot(worldId, auth);
+    } catch (e: any) {
+      deps.log.error({ err: String(e?.message ?? e), worldId }, 'semanticSnapshot proxy failed');
+      reply.code(500);
+      return { ok: false, error: 'Gateway error' };
+    }
+
+    if (!res.ok) {
+      const statusCode = typeof res.statusCode === 'number' ? res.statusCode : 500;
+      reply.code(statusCode);
+      return {
+        ok: false,
+        error: res.error,
+        code: res.code,
+      };
+    }
+
+    return {
+      ok: true,
+      snapshot: res.snapshot,
+    };
   });
 }

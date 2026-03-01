@@ -1,3 +1,5 @@
+import type { SemanticSnapshot } from './types.js';
+
 export type AstrTownClientDeps = {
   baseUrl: string;
   fetchFn?: typeof fetch;
@@ -53,6 +55,18 @@ export type UpsertRelationshipResponse = {
   code?: string;
   statusCode?: number;
 };
+
+export type GetSemanticSnapshotResponse =
+  | {
+      ok: true;
+      snapshot: SemanticSnapshot;
+    }
+  | {
+      ok: false;
+      error: string;
+      code?: string;
+      statusCode?: number;
+    };
 
 export class AstrTownClient {
   readonly baseUrl: string;
@@ -226,6 +240,63 @@ export class AstrTownClient {
     }
 
     return { ok: true };
+  }
+
+  async getSemanticSnapshot(worldId: string, authorization?: string): Promise<GetSemanticSnapshotResponse> {
+    let res: Response;
+    try {
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+      };
+      if (authorization) {
+        headers.authorization = authorization;
+      }
+
+      res = await this.fetchFn(`${this.baseUrl}/api/query`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          path: 'mapSemanticService:getSemanticSnapshot',
+          args: { worldId },
+          format: 'json',
+        }),
+      });
+    } catch (e: any) {
+      return { ok: false, error: String(e?.message ?? e ?? 'Network error') };
+    }
+
+    const json = (await res.json().catch(() => ({}))) as any;
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: String(json?.error ?? json?.message ?? `Request failed with status ${res.status}`),
+        code: typeof json?.code === 'string' ? json.code : undefined,
+        statusCode: res.status,
+      };
+    }
+
+    if (json?.status === 'error') {
+      return {
+        ok: false,
+        error: String(json?.errorMessage ?? json?.error ?? 'Semantic snapshot query failed'),
+        code: typeof json?.code === 'string' ? json.code : undefined,
+        statusCode: 500,
+      };
+    }
+
+    if (!json?.value || typeof json.value !== 'object') {
+      return {
+        ok: false,
+        error: 'Invalid semantic snapshot response',
+        code: 'INVALID_RESPONSE',
+        statusCode: 500,
+      };
+    }
+
+    return {
+      ok: true,
+      snapshot: json.value as SemanticSnapshot,
+    };
   }
 
   async upsertRelationship(

@@ -27,6 +27,53 @@ export type MemoryItem = {
   relevanceScore?: number;
 };
 
+export interface MapSummary {
+  width: number;
+  height: number;
+  tileDim: number;
+  version: number;
+}
+
+export interface ZoneCard {
+  zoneId: string;
+  name: string;
+  description: string;
+  priority: number;
+  bounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  suggestedActivities: string[];
+}
+
+export interface ObjectCard {
+  instanceId: string;
+  catalogKey: string;
+  name: string;
+  description: string;
+  category: string;
+  position: {
+    x: number;
+    y: number;
+  };
+  occupiedTiles: Array<{
+    dx: number;
+    dy: number;
+  }>;
+  interactionHint: string | null;
+  blocksMovement: boolean;
+  note: string | null;
+}
+
+export interface SemanticSnapshot {
+  mapSummary: MapSummary;
+  zones: ZoneCard[];
+  objects: ObjectCard[];
+  coordinateIndex?: Record<string, { zoneId: string; zoneName: string; priority: number }>;
+}
+
 export type ConversationStartedPayload = {
   conversationId: string;
   otherParticipantIds: string[];
