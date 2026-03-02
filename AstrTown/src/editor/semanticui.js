@@ -178,6 +178,7 @@ export async function initSemanticUI(g_ctx, options = {}) {
   const listEl = document.getElementById('semantic-object-list');
   const panelBody = document.getElementById('semantic-panel-body');
   const togglePanelBtn = document.getElementById('semantic-toggle-panel');
+  const normalBtn = document.getElementById('semantic-normal-toggle');
   const placementBtn = document.getElementById('semantic-placement-toggle');
   const zoneToggleBtn = document.getElementById('semantic-zone-toggle');
   const placementStatus = document.getElementById('semantic-placement-status');
@@ -255,8 +256,17 @@ export async function initSemanticUI(g_ctx, options = {}) {
     },
   });
 
+  function syncModeButtonState(button, active) {
+    if (!button) {
+      return;
+    }
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+
   function setMode(mode) {
     state.mode = mode;
+    const normalMode = mode === 'normal';
     const objectMode = mode === 'object';
     const zoneMode = mode === 'zone';
 
@@ -265,17 +275,15 @@ export async function initSemanticUI(g_ctx, options = {}) {
     placer.setPlacementEnabled(objectMode);
     zoner.setDrawingEnabled(zoneMode);
 
+    syncModeButtonState(normalBtn, normalMode);
+    syncModeButtonState(placementBtn, objectMode);
+    syncModeButtonState(zoneToggleBtn, zoneMode);
+
     if (objectMode) {
-      placementBtn.textContent = '关闭放置模式';
-      zoneToggleBtn.textContent = '开启区域模式';
       placementStatus.textContent = '当前：物体放置模式';
     } else if (zoneMode) {
-      placementBtn.textContent = '开启放置模式';
-      zoneToggleBtn.textContent = '关闭区域模式';
       placementStatus.textContent = '当前：区域绘制模式';
     } else {
-      placementBtn.textContent = '开启放置模式';
-      zoneToggleBtn.textContent = '开启区域模式';
       placementStatus.textContent = '当前：普通绘制模式';
     }
   }
@@ -349,7 +357,15 @@ export async function initSemanticUI(g_ctx, options = {}) {
 
     if (zones.length === 0) {
       const li = document.createElement('li');
-      li.textContent = '暂无区域，请切换区域模式拖拽创建';
+      li.className = 'semantic-empty-card';
+
+      const title = document.createElement('strong');
+      title.textContent = '暂无区域';
+      const hint = document.createElement('span');
+      hint.textContent = '切换到“区域绘制”后，在地图上拖拽即可创建区域。';
+
+      li.appendChild(title);
+      li.appendChild(hint);
       zoneListEl.appendChild(li);
       return;
     }
@@ -358,11 +374,10 @@ export async function initSemanticUI(g_ctx, options = {}) {
       const zone = zones[i];
       const b = zone.bounds;
       const li = document.createElement('li');
-      li.style.cursor = 'pointer';
-      li.style.padding = '4px 6px';
-      li.style.margin = '2px 0';
-      li.style.border = '1px solid #555';
-      li.style.background = selectedZoneId === zone.zoneId ? '#fff3bf' : '#fff';
+      li.className = 'semantic-list-item';
+      if (selectedZoneId === zone.zoneId) {
+        li.classList.add('is-selected');
+      }
       li.textContent = `${zone.name} | P${zone.priority} | [${b.x},${b.y},${b.width},${b.height}]`;
       li.dataset.zoneId = zone.zoneId;
       li.addEventListener('click', () => {
@@ -399,7 +414,15 @@ export async function initSemanticUI(g_ctx, options = {}) {
 
     if (state.catalog.length === 0) {
       const li = document.createElement('li');
-      li.textContent = '暂无物体，请先新建';
+      li.className = 'semantic-empty-card';
+
+      const title = document.createElement('strong');
+      title.textContent = '暂无物体';
+      const hint = document.createElement('span');
+      hint.textContent = '点击“新建物体”创建后，可切换到“物体放置”模式进行摆放。';
+
+      li.appendChild(title);
+      li.appendChild(hint);
       listEl.appendChild(li);
       return;
     }
@@ -407,11 +430,10 @@ export async function initSemanticUI(g_ctx, options = {}) {
     for (let i = 0; i < state.catalog.length; i++) {
       const item = state.catalog[i];
       const li = document.createElement('li');
-      li.style.cursor = 'pointer';
-      li.style.padding = '4px 6px';
-      li.style.margin = '2px 0';
-      li.style.border = '1px solid #555';
-      li.style.background = state.selectedCatalogKey === item.key ? '#d0ebff' : '#fff';
+      li.className = 'semantic-list-item';
+      if (state.selectedCatalogKey === item.key) {
+        li.classList.add('is-selected');
+      }
       li.textContent = `${item.name} (${item.key})`;
       li.dataset.key = item.key;
       li.addEventListener('click', () => {
@@ -555,7 +577,14 @@ export async function initSemanticUI(g_ctx, options = {}) {
   function togglePanel() {
     state.panelCollapsed = !state.panelCollapsed;
     panelBody.style.display = state.panelCollapsed ? 'none' : 'block';
-    togglePanelBtn.textContent = state.panelCollapsed ? '展开面板' : '收起面板';
+
+    togglePanelBtn.classList.toggle('is-collapsed', state.panelCollapsed);
+    togglePanelBtn.setAttribute('aria-expanded', state.panelCollapsed ? 'false' : 'true');
+
+    const textEl = togglePanelBtn.querySelector('.semantic-collapse-text');
+    if (textEl) {
+      textEl.textContent = state.panelCollapsed ? '展开面板' : '收起面板';
+    }
   }
 
   function togglePlacement() {
@@ -637,6 +666,9 @@ export async function initSemanticUI(g_ctx, options = {}) {
   }
 
   togglePanelBtn.addEventListener('click', togglePanel);
+  if (normalBtn) {
+    normalBtn.addEventListener('click', () => setMode('normal'));
+  }
   placementBtn.addEventListener('click', togglePlacement);
   zoneToggleBtn.addEventListener('click', toggleZoneMode);
 

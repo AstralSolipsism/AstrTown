@@ -1,11 +1,328 @@
 <html>
 <head>
 <style>
+    :root {
+        --sem-bg-canvas: #0F1117;
+        --sem-bg-panel: #151A22;
+        --sem-bg-card: #1B2330;
+        --sem-bg-elevated: #232D3D;
+        --sem-text-primary: #E6EDF3;
+        --sem-text-secondary: #9FB0C3;
+        --sem-text-muted: #7E8DA3;
+        --sem-border-default: #2A3342;
+        --sem-border-strong: #3A465A;
+        --sem-accent: #3B82F6;
+        --sem-accent-hover: #60A5FA;
+        --sem-danger: #EF4444;
+        --sem-danger-hover: #DC2626;
+        --sem-focus-ring: #93C5FD;
+    }
+
     table, th, td {
         border: 1px solid black;
         border-radius: 10px;
     }
+
+    #semantic {
+        background: var(--sem-bg-canvas);
+        color: var(--sem-text-primary);
+        padding: 12px;
+    }
+
+    #semantic table,
+    #semantic th,
+    #semantic td {
+        border-color: var(--sem-border-default);
+    }
+
+    #semantic h3 {
+        margin: 0 0 10px;
+        color: var(--sem-text-primary);
+    }
+
+    #semantic hr {
+        border: 0;
+        border-top: 1px solid var(--sem-border-default);
+    }
+
+    .semantic-toolbar {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 10px 12px;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+
+    .semantic-collapse-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border: 1px solid var(--sem-border-default);
+        border-radius: 10px;
+        background: var(--sem-bg-panel);
+        color: var(--sem-text-primary);
+        cursor: pointer;
+        transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+        touch-action: manipulation;
+    }
+
+    .semantic-collapse-btn:hover {
+        background: var(--sem-bg-elevated);
+        border-color: var(--sem-border-strong);
+    }
+
+    .semantic-collapse-btn:focus-visible,
+    .semantic-mode-btn:focus-visible,
+    .semantic-btn:focus-visible,
+    .semantic-field input:focus-visible,
+    .semantic-field textarea:focus-visible {
+        outline: 2px solid var(--sem-focus-ring);
+        outline-offset: 2px;
+    }
+
+    .semantic-collapse-icon {
+        display: inline-block;
+        transition: transform 0.2s ease;
+    }
+
+    .semantic-collapse-btn.is-collapsed .semantic-collapse-icon {
+        transform: rotate(-90deg);
+    }
+
+    .semantic-mode-wrap {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .semantic-mode-segment {
+        display: inline-flex;
+        gap: 4px;
+        padding: 3px;
+        border: 1px solid var(--sem-border-default);
+        border-radius: 999px;
+        background: var(--sem-bg-panel);
+    }
+
+    .semantic-mode-btn {
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--sem-text-secondary);
+        padding: 6px 12px;
+        cursor: pointer;
+        transition: background-color 0.2s ease, color 0.2s ease;
+        touch-action: manipulation;
+    }
+
+    .semantic-mode-btn:hover {
+        color: var(--sem-text-primary);
+        background: rgba(59, 130, 246, 0.14);
+    }
+
+    .semantic-mode-btn.is-active {
+        background: var(--sem-accent);
+        color: #ffffff;
+    }
+
+    .semantic-mode-status {
+        color: var(--sem-text-secondary);
+        font-size: 13px;
+    }
+
+    #semantic-panel-body {
+        padding-top: 8px;
+    }
+
+    .semantic-grid-two {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 12px;
+    }
+
+    .semantic-col-list,
+    .semantic-col-form {
+        padding: 12px;
+        vertical-align: top;
+        border: 1px solid var(--sem-border-default);
+        border-radius: 12px;
+        background: var(--sem-bg-panel);
+    }
+
+    .semantic-list {
+        list-style: none;
+        margin: 0 0 10px;
+        min-height: 180px;
+        max-height: 420px;
+        overflow-y: auto;
+        border: 1px solid var(--sem-border-default);
+        border-radius: 10px;
+        background: var(--sem-bg-card);
+        padding: 8px;
+    }
+
+    .semantic-list-item {
+        margin: 0 0 6px;
+        padding: 8px 10px;
+        border: 1px solid var(--sem-border-default);
+        border-radius: 8px;
+        background: var(--sem-bg-panel);
+        color: var(--sem-text-primary);
+        cursor: pointer;
+        transition: border-color 0.2s ease, background-color 0.2s ease;
+    }
+
+    .semantic-list-item:hover {
+        border-color: var(--sem-accent-hover);
+        background: var(--sem-bg-elevated);
+    }
+
+    .semantic-list-item.is-selected {
+        border-color: var(--sem-accent);
+        background: rgba(59, 130, 246, 0.2);
+    }
+
+    .semantic-empty-card {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin: 0;
+        padding: 12px;
+        border: 1px dashed var(--sem-border-strong);
+        border-radius: 8px;
+        background: rgba(36, 48, 64, 0.45);
+        color: var(--sem-text-secondary);
+    }
+
+    .semantic-empty-card strong {
+        color: var(--sem-text-primary);
+        font-size: 14px;
+    }
+
+    .semantic-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .semantic-btn {
+        border: 1px solid var(--sem-border-default);
+        border-radius: 8px;
+        padding: 7px 12px;
+        background: var(--sem-bg-card);
+        color: var(--sem-text-primary);
+        cursor: pointer;
+        transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+        touch-action: manipulation;
+    }
+
+    .semantic-btn:hover {
+        background: var(--sem-bg-elevated);
+        border-color: var(--sem-border-strong);
+    }
+
+    .semantic-btn-primary {
+        background: var(--sem-accent);
+        border-color: var(--sem-accent);
+        color: #ffffff;
+    }
+
+    .semantic-btn-primary:hover {
+        background: var(--sem-accent-hover);
+        border-color: var(--sem-accent-hover);
+    }
+
+    .semantic-btn-danger {
+        background: rgba(239, 68, 68, 0.16);
+        border-color: rgba(239, 68, 68, 0.48);
+        color: #fecaca;
+    }
+
+    .semantic-btn-danger:hover {
+        background: rgba(220, 38, 38, 0.25);
+        border-color: var(--sem-danger-hover);
+        color: #ffffff;
+    }
+
+    .semantic-form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+    }
+
+    .semantic-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .semantic-field--full,
+    .semantic-field-checkbox {
+        grid-column: 1 / -1;
+    }
+
+    .semantic-field label {
+        color: var(--sem-text-secondary);
+        font-size: 13px;
+    }
+
+    .semantic-field input,
+    .semantic-field textarea {
+        width: 100%;
+        border: 1px solid var(--sem-border-default);
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: var(--sem-bg-card);
+        color: var(--sem-text-primary);
+    }
+
+    .semantic-field textarea {
+        resize: vertical;
+        min-height: 78px;
+    }
+
+    .semantic-field-checkbox label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--sem-text-primary);
+        cursor: pointer;
+    }
+
+    .semantic-field-checkbox input {
+        width: auto;
+        accent-color: var(--sem-accent);
+    }
+
+    #semantic-zone-primary {
+        margin-top: 10px;
+        color: var(--sem-text-muted);
+    }
+
+    @media (max-width: 980px) {
+        .semantic-toolbar {
+            grid-template-columns: 1fr;
+        }
+
+        .semantic-grid-two {
+            display: block;
+        }
+
+        .semantic-col-list,
+        .semantic-col-form {
+            display: block;
+            width: 100%;
+            margin-bottom: 12px;
+        }
+
+        .semantic-form-grid {
+            grid-template-columns: 1fr;
+        }
+    }
  </style>
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
 <body>
@@ -96,55 +413,68 @@
 </div>
 
 <div id="semantic" class="tabcontent">
-    <table width="100%">
-        <tr>
-            <td>
-                <button id="semantic-toggle-panel">收起面板</button>
-            </td>
-            <td>
-                <button id="semantic-placement-toggle">开启放置模式</button>
-                <button id="semantic-zone-toggle">开启区域模式</button>
-                <span id="semantic-placement-status">当前：普通绘制模式</span>
-            </td>
-        </tr>
-    </table>
+    <div class="semantic-toolbar">
+        <button id="semantic-toggle-panel" class="semantic-collapse-btn" type="button" aria-expanded="true" aria-controls="semantic-panel-body">
+            <span class="semantic-collapse-icon" aria-hidden="true">▼</span>
+            <span class="semantic-collapse-text">收起面板</span>
+        </button>
+        <div class="semantic-mode-wrap">
+            <div class="semantic-mode-segment" role="group" aria-label="语义编辑模式切换">
+                <button id="semantic-normal-toggle" class="semantic-mode-btn is-active" type="button" aria-pressed="true">普通模式</button>
+                <button id="semantic-placement-toggle" class="semantic-mode-btn" type="button" aria-pressed="false">物体放置</button>
+                <button id="semantic-zone-toggle" class="semantic-mode-btn" type="button" aria-pressed="false">区域绘制</button>
+            </div>
+            <span id="semantic-placement-status" class="semantic-mode-status" aria-live="polite">当前：普通绘制模式</span>
+        </div>
+    </div>
 
-    <div id="semantic-panel-body" style="padding-top: 8px;">
-        <table width="100%">
+    <div id="semantic-panel-body">
+        <table class="semantic-grid-two" width="100%">
             <tr>
-                <td width="40%" valign="top">
+                <td class="semantic-col-list" width="40%" valign="top">
                     <h3>物体列表</h3>
-                    <ul id="semantic-object-list" style="min-height: 280px; max-height: 420px; overflow-y: auto; border: 1px solid #333; padding: 8px;"></ul>
-                    <button id="semantic-new-object" type="button">新建物体</button>
-                    <button id="semantic-delete-object" type="button">删除选中</button>
+                    <ul id="semantic-object-list" class="semantic-list"></ul>
+                    <div class="semantic-actions">
+                        <button id="semantic-new-object" class="semantic-btn" type="button">新建物体</button>
+                        <button id="semantic-delete-object" class="semantic-btn semantic-btn-danger" type="button">删除选中</button>
+                    </div>
                 </td>
-                <td width="60%" valign="top">
+                <td class="semantic-col-form" width="60%" valign="top">
                     <h3>物体创建 / 编辑</h3>
-                    <form id="semantic-object-form">
-                        <div>
-                            <label>Key：<input id="semantic-key" name="key" type="text" required /></label>
+                    <form id="semantic-object-form" class="semantic-form-grid" autocomplete="off">
+                        <div class="semantic-field">
+                            <label for="semantic-key">Key</label>
+                            <input id="semantic-key" name="key" type="text" required />
                         </div>
-                        <div>
-                            <label>名称：<input id="semantic-name" name="name" type="text" required /></label>
+                        <div class="semantic-field">
+                            <label for="semantic-name">名称</label>
+                            <input id="semantic-name" name="name" type="text" required />
                         </div>
-                        <div>
-                            <label>分类：<input id="semantic-category" name="category" type="text" /></label>
+                        <div class="semantic-field">
+                            <label for="semantic-category">分类</label>
+                            <input id="semantic-category" name="category" type="text" />
                         </div>
-                        <div>
-                            <label>描述：<textarea id="semantic-description" name="description" rows="3" cols="50"></textarea></label>
+                        <div class="semantic-field">
+                            <label for="semantic-interaction-hint">交互提示</label>
+                            <input id="semantic-interaction-hint" name="interactionHint" type="text" />
                         </div>
-                        <div>
-                            <label>交互提示：<input id="semantic-interaction-hint" name="interactionHint" type="text" /></label>
+                        <div class="semantic-field semantic-field--full">
+                            <label for="semantic-description">描述</label>
+                            <textarea id="semantic-description" name="description" rows="3" cols="50"></textarea>
                         </div>
-                        <div>
-                            <label>占地（每行 dx,dy）：<textarea id="semantic-occupied-tiles" name="occupiedTiles" rows="4" cols="30">0,0</textarea></label>
+                        <div class="semantic-field semantic-field--full">
+                            <label for="semantic-occupied-tiles">占地（每行 dx,dy）</label>
+                            <textarea id="semantic-occupied-tiles" name="occupiedTiles" rows="4" cols="30">0,0</textarea>
                         </div>
-                        <div>
-                            <label><input id="semantic-blocks-movement" name="blocksMovement" type="checkbox" checked /> 阻挡移动</label>
+                        <div class="semantic-field semantic-field-checkbox">
+                            <label for="semantic-blocks-movement">
+                                <input id="semantic-blocks-movement" name="blocksMovement" type="checkbox" checked />
+                                阻挡移动
+                            </label>
                         </div>
-                        <div>
-                            <button id="semantic-save-object" type="submit">保存物体</button>
-                            <button id="semantic-reset-form" type="button">重置表单</button>
+                        <div class="semantic-actions semantic-field--full">
+                            <button id="semantic-save-object" class="semantic-btn semantic-btn-primary" type="submit">保存物体</button>
+                            <button id="semantic-reset-form" class="semantic-btn" type="button">重置表单</button>
                         </div>
                     </form>
                 </td>
@@ -153,35 +483,41 @@
 
         <hr style="margin: 16px 0;" />
 
-        <table width="100%">
+        <table class="semantic-grid-two" width="100%">
             <tr>
-                <td width="40%" valign="top">
+                <td class="semantic-col-list" width="40%" valign="top">
                     <h3>区域列表</h3>
-                    <ul id="semantic-zone-list" style="min-height: 180px; max-height: 300px; overflow-y: auto; border: 1px solid #333; padding: 8px;"></ul>
-                    <button id="semantic-new-zone" type="button">新建区域</button>
-                    <button id="semantic-delete-zone" type="button">删除选中区域</button>
+                    <ul id="semantic-zone-list" class="semantic-list"></ul>
+                    <div class="semantic-actions">
+                        <button id="semantic-new-zone" class="semantic-btn" type="button">新建区域</button>
+                        <button id="semantic-delete-zone" class="semantic-btn semantic-btn-danger" type="button">删除选中区域</button>
+                    </div>
                 </td>
-                <td width="60%" valign="top">
+                <td class="semantic-col-form" width="60%" valign="top">
                     <h3>区域创建 / 编辑</h3>
-                    <form id="semantic-zone-form">
-                        <div>
-                            <label>名称：<input id="semantic-zone-name" name="zoneName" type="text" required /></label>
+                    <form id="semantic-zone-form" class="semantic-form-grid" autocomplete="off">
+                        <div class="semantic-field">
+                            <label for="semantic-zone-name">名称</label>
+                            <input id="semantic-zone-name" name="zoneName" type="text" required />
                         </div>
-                        <div>
-                            <label>描述：<textarea id="semantic-zone-description" name="zoneDescription" rows="3" cols="50"></textarea></label>
+                        <div class="semantic-field">
+                            <label for="semantic-zone-priority">优先级</label>
+                            <input id="semantic-zone-priority" name="zonePriority" type="number" value="0" />
                         </div>
-                        <div>
-                            <label>优先级：<input id="semantic-zone-priority" name="zonePriority" type="number" value="0" /></label>
+                        <div class="semantic-field semantic-field--full">
+                            <label for="semantic-zone-description">描述</label>
+                            <textarea id="semantic-zone-description" name="zoneDescription" rows="3" cols="50"></textarea>
                         </div>
-                        <div>
-                            <label>推荐活动（每行一个）：<textarea id="semantic-zone-activities" name="zoneActivities" rows="4" cols="50"></textarea></label>
+                        <div class="semantic-field semantic-field--full">
+                            <label for="semantic-zone-activities">推荐活动（每行一个）</label>
+                            <textarea id="semantic-zone-activities" name="zoneActivities" rows="4" cols="50"></textarea>
                         </div>
-                        <div>
-                            <button id="semantic-save-zone" type="submit">保存区域信息</button>
-                            <button id="semantic-reset-zone-form" type="button">重置区域表单</button>
+                        <div class="semantic-actions semantic-field--full">
+                            <button id="semantic-save-zone" class="semantic-btn semantic-btn-primary" type="submit">保存区域信息</button>
+                            <button id="semantic-reset-zone-form" class="semantic-btn" type="button">重置区域表单</button>
                         </div>
                     </form>
-                    <div id="semantic-zone-primary" style="margin-top: 8px; color: #333;">该格子主区域：无</div>
+                    <div id="semantic-zone-primary">该格子主区域：无</div>
                 </td>
             </tr>
         </table>
