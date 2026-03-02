@@ -7,23 +7,32 @@ import * as CONFIG from './leconfig.js'
 // --
 
 export function initMainHTMLWindow() {
-    document.getElementById("layer0pane").style.maxWidth  = ""+CONFIG.htmlLayerPaneW+"px"; 
-    document.getElementById("layer0pane").style.maxHeight = ""+CONFIG.htmlLayerPaneH+"px"; 
-    document.getElementById("layer1pane").style.maxWidth  = ""+CONFIG.htmlLayerPaneW+"px"; 
-    document.getElementById("layer1pane").style.maxHeight = ""+CONFIG.htmlLayerPaneH+"px"; 
-    document.getElementById("layer2pane").style.maxWidth  = ""+CONFIG.htmlLayerPaneW+"px"; 
-    document.getElementById("layer2pane").style.maxHeight = ""+CONFIG.htmlLayerPaneH+"px"; 
-    document.getElementById("layer3pane").style.maxWidth  = ""+CONFIG.htmlLayerPaneW+"px"; 
-    document.getElementById("layer3pane").style.maxHeight = ""+CONFIG.htmlLayerPaneH+"px"; 
+    const paneIds = ['layer0pane', 'layer1pane', 'layer2pane', 'layer3pane'];
+    for (const paneId of paneIds) {
+        const pane = document.getElementById(paneId);
+        if (!pane) {
+            continue;
+        }
+        pane.style.maxWidth = `${CONFIG.htmlLayerPaneW}px`;
+        pane.style.maxHeight = `${CONFIG.htmlLayerPaneH}px`;
+    }
 
-    document.getElementById("tilesetpane").style.maxWidth  = ""+CONFIG.htmlTilesetPaneW+"px"; 
-    document.getElementById("tilesetpane").style.maxHeight = ""+CONFIG.htmlTilesetPaneH+"px";
-    document.getElementById("compositepane").style.maxWidth  = ""+CONFIG.htmlCompositePaneW+"px"; 
-    document.getElementById("compositepane").style.maxHeight = ""+CONFIG.htmlCompositePaneH+"px";
+    const tilesetPane = document.getElementById('tilesetpane');
+    if (tilesetPane) {
+        tilesetPane.style.maxWidth = `${CONFIG.htmlTilesetPaneW}px`;
+        tilesetPane.style.maxHeight = `${CONFIG.htmlTilesetPaneH}px`;
+    }
 
-    // hide map tab
-    let mappane = document.getElementById("map");
-    mappane.style.display = "none";
+    const compositePane = document.getElementById('compositepane');
+    if (compositePane) {
+        compositePane.style.maxWidth = '100%';
+        compositePane.style.maxHeight = '100%';
+    }
+
+    const mapPane = document.getElementById('map');
+    if (mapPane) {
+        mapPane.style.display = 'none';
+    }
 }
 
 // --

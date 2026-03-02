@@ -1,529 +1,275 @@
-<html>
+<!DOCTYPE html>
+<html lang="zh-CN">
 <head>
-<style>
-    :root {
-        --sem-bg-canvas: #0F1117;
-        --sem-bg-panel: #151A22;
-        --sem-bg-card: #1B2330;
-        --sem-bg-elevated: #232D3D;
-        --sem-text-primary: #E6EDF3;
-        --sem-text-secondary: #9FB0C3;
-        --sem-text-muted: #7E8DA3;
-        --sem-border-default: #2A3342;
-        --sem-border-strong: #3A465A;
-        --sem-accent: #3B82F6;
-        --sem-accent-hover: #60A5FA;
-        --sem-danger: #EF4444;
-        --sem-danger-hover: #DC2626;
-        --sem-focus-ring: #93C5FD;
-    }
-
-    table, th, td {
-        border: 1px solid black;
-        border-radius: 10px;
-    }
-
-    #semantic {
-        background: var(--sem-bg-canvas);
-        color: var(--sem-text-primary);
-        padding: 12px;
-    }
-
-    #semantic table,
-    #semantic th,
-    #semantic td {
-        border-color: var(--sem-border-default);
-    }
-
-    #semantic h3 {
-        margin: 0 0 10px;
-        color: var(--sem-text-primary);
-    }
-
-    #semantic hr {
-        border: 0;
-        border-top: 1px solid var(--sem-border-default);
-    }
-
-    .semantic-toolbar {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        gap: 10px 12px;
-        align-items: center;
-        margin-bottom: 10px;
-    }
-
-    .semantic-collapse-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 12px;
-        border: 1px solid var(--sem-border-default);
-        border-radius: 10px;
-        background: var(--sem-bg-panel);
-        color: var(--sem-text-primary);
-        cursor: pointer;
-        transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-        touch-action: manipulation;
-    }
-
-    .semantic-collapse-btn:hover {
-        background: var(--sem-bg-elevated);
-        border-color: var(--sem-border-strong);
-    }
-
-    .semantic-collapse-btn:focus-visible,
-    .semantic-mode-btn:focus-visible,
-    .semantic-btn:focus-visible,
-    .semantic-field input:focus-visible,
-    .semantic-field textarea:focus-visible {
-        outline: 2px solid var(--sem-focus-ring);
-        outline-offset: 2px;
-    }
-
-    .semantic-collapse-icon {
-        display: inline-block;
-        transition: transform 0.2s ease;
-    }
-
-    .semantic-collapse-btn.is-collapsed .semantic-collapse-icon {
-        transform: rotate(-90deg);
-    }
-
-    .semantic-mode-wrap {
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 10px;
-    }
-
-    .semantic-mode-segment {
-        display: inline-flex;
-        gap: 4px;
-        padding: 3px;
-        border: 1px solid var(--sem-border-default);
-        border-radius: 999px;
-        background: var(--sem-bg-panel);
-    }
-
-    .semantic-mode-btn {
-        border: 0;
-        border-radius: 999px;
-        background: transparent;
-        color: var(--sem-text-secondary);
-        padding: 6px 12px;
-        cursor: pointer;
-        transition: background-color 0.2s ease, color 0.2s ease;
-        touch-action: manipulation;
-    }
-
-    .semantic-mode-btn:hover {
-        color: var(--sem-text-primary);
-        background: rgba(59, 130, 246, 0.14);
-    }
-
-    .semantic-mode-btn.is-active {
-        background: var(--sem-accent);
-        color: #ffffff;
-    }
-
-    .semantic-mode-status {
-        color: var(--sem-text-secondary);
-        font-size: 13px;
-    }
-
-    #semantic-panel-body {
-        padding-top: 8px;
-    }
-
-    .semantic-grid-two {
-        width: 100%;
-        border-collapse: separate;
-        border-spacing: 12px;
-    }
-
-    .semantic-col-list,
-    .semantic-col-form {
-        padding: 12px;
-        vertical-align: top;
-        border: 1px solid var(--sem-border-default);
-        border-radius: 12px;
-        background: var(--sem-bg-panel);
-    }
-
-    .semantic-list {
-        list-style: none;
-        margin: 0 0 10px;
-        min-height: 180px;
-        max-height: 420px;
-        overflow-y: auto;
-        border: 1px solid var(--sem-border-default);
-        border-radius: 10px;
-        background: var(--sem-bg-card);
-        padding: 8px;
-    }
-
-    .semantic-list-item {
-        margin: 0 0 6px;
-        padding: 8px 10px;
-        border: 1px solid var(--sem-border-default);
-        border-radius: 8px;
-        background: var(--sem-bg-panel);
-        color: var(--sem-text-primary);
-        cursor: pointer;
-        transition: border-color 0.2s ease, background-color 0.2s ease;
-    }
-
-    .semantic-list-item:hover {
-        border-color: var(--sem-accent-hover);
-        background: var(--sem-bg-elevated);
-    }
-
-    .semantic-list-item.is-selected {
-        border-color: var(--sem-accent);
-        background: rgba(59, 130, 246, 0.2);
-    }
-
-    .semantic-empty-card {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        margin: 0;
-        padding: 12px;
-        border: 1px dashed var(--sem-border-strong);
-        border-radius: 8px;
-        background: rgba(36, 48, 64, 0.45);
-        color: var(--sem-text-secondary);
-    }
-
-    .semantic-empty-card strong {
-        color: var(--sem-text-primary);
-        font-size: 14px;
-    }
-
-    .semantic-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-    }
-
-    .semantic-btn {
-        border: 1px solid var(--sem-border-default);
-        border-radius: 8px;
-        padding: 7px 12px;
-        background: var(--sem-bg-card);
-        color: var(--sem-text-primary);
-        cursor: pointer;
-        transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-        touch-action: manipulation;
-    }
-
-    .semantic-btn:hover {
-        background: var(--sem-bg-elevated);
-        border-color: var(--sem-border-strong);
-    }
-
-    .semantic-btn-primary {
-        background: var(--sem-accent);
-        border-color: var(--sem-accent);
-        color: #ffffff;
-    }
-
-    .semantic-btn-primary:hover {
-        background: var(--sem-accent-hover);
-        border-color: var(--sem-accent-hover);
-    }
-
-    .semantic-btn-danger {
-        background: rgba(239, 68, 68, 0.16);
-        border-color: rgba(239, 68, 68, 0.48);
-        color: #fecaca;
-    }
-
-    .semantic-btn-danger:hover {
-        background: rgba(220, 38, 38, 0.25);
-        border-color: var(--sem-danger-hover);
-        color: #ffffff;
-    }
-
-    .semantic-form-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-    }
-
-    .semantic-field {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-    }
-
-    .semantic-field--full,
-    .semantic-field-checkbox {
-        grid-column: 1 / -1;
-    }
-
-    .semantic-field label {
-        color: var(--sem-text-secondary);
-        font-size: 13px;
-    }
-
-    .semantic-field input,
-    .semantic-field textarea {
-        width: 100%;
-        border: 1px solid var(--sem-border-default);
-        border-radius: 8px;
-        padding: 8px 10px;
-        background: var(--sem-bg-card);
-        color: var(--sem-text-primary);
-    }
-
-    .semantic-field textarea {
-        resize: vertical;
-        min-height: 78px;
-    }
-
-    .semantic-field-checkbox label {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        color: var(--sem-text-primary);
-        cursor: pointer;
-    }
-
-    .semantic-field-checkbox input {
-        width: auto;
-        accent-color: var(--sem-accent);
-    }
-
-    #semantic-zone-primary {
-        margin-top: 10px;
-        color: var(--sem-text-muted);
-    }
-
-    @media (max-width: 980px) {
-        .semantic-toolbar {
-            grid-template-columns: 1fr;
-        }
-
-        .semantic-grid-two {
-            display: block;
-        }
-
-        .semantic-col-list,
-        .semantic-col-form {
-            display: block;
-            width: 100%;
-            margin-bottom: 12px;
-        }
-
-        .semantic-form-grid {
-            grid-template-columns: 1fr;
-        }
-    }
- </style>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AstrTown 地图编辑器</title>
+  <link rel="stylesheet" href="le-layout.css" />
 </head>
-<body>
-    <script src="le.js" type="module"></script>
+<body id="app-root">
+  <!-- 顶部工具栏 -->
+  <div id="app-toolbar">
+    <div class="toolbar-group toolbar-file">
+      <button id="btn-save" type="button" title="保存 (S)">💾</button>
+      <button id="btn-load-level" type="button" title="加载地图" onclick="document.getElementById('levelfile').click()">📂</button>
+    </div>
 
-    <div class="tab">
-        <button class="tablinks" onclick="onTab(event, 'edit')">edit</button>
-        <button class="tablinks" onclick="onTab(event, 'map')">map</button>
-        <button class="tablinks" onclick="onTab(event, 'config')">config</button>
-        <button class="tablinks" onclick="onTab(event, 'semantic')">semantic</button>
+    <div class="toolbar-sep"></div>
+
+    <div class="toolbar-group toolbar-edit">
+      <button id="btn-undo" type="button" title="撤销 (Ctrl+Z)">↩</button>
+    </div>
+
+    <div class="toolbar-sep"></div>
+
+    <div class="toolbar-group toolbar-mode">
+      <button class="mode-btn active" id="mode-terrain" data-mode="terrain" type="button" title="地形绘制">地形</button>
+      <button class="mode-btn" id="mode-object" data-mode="object" type="button" title="放置对象">物体</button>
+      <button class="mode-btn" id="mode-zone" data-mode="zone" type="button" title="绘制区域">区域</button>
+    </div>
+
+    <div class="toolbar-sep"></div>
+
+    <div class="toolbar-group toolbar-view">
+      <form name="myForm" id="grid-size-form">
+        <label><input type="radio" name="radioTiledim" value="16" /> 16px</label>
+        <label><input type="radio" name="radioTiledim" value="32" checked /> 32px</label>
+      </form>
+      <button id="btn-fill" type="button" title="填充背景层" onclick="fill0()">填充</button>
+    </div>
+  </div>
+
+  <!-- 主工作区 -->
+  <div id="app-workspace">
+    <!-- 左侧导航 -->
+    <nav id="app-sidebar" aria-label="编辑器功能导航">
+      <button class="sidebar-btn active" data-panel="terrain" type="button" title="地形绘制">🗺</button>
+      <button class="sidebar-btn" data-panel="layers" type="button" title="图层管理">📋</button>
+      <button class="sidebar-btn" data-panel="sem-objects" type="button" title="语义物体">📌</button>
+      <button class="sidebar-btn" data-panel="sem-zones" type="button" title="语义区域">🔲</button>
+      <button class="sidebar-btn" data-panel="files" type="button" title="资源文件">📁</button>
+    </nav>
+
+    <!-- 中央画布区 -->
+    <div id="app-canvas-area">
+      <div id="canvas-wrapper">
+        <div id="compositepane">
+          <canvas id="composite" width="2048" height="1536"></canvas>
+        </div>
+
+        <!-- 后台隐藏画布：保留旧 DOM id 兼容已有初始化逻辑 -->
+        <div id="layer0pane" class="legacy-hidden-pane">
+          <canvas id="level0" class="bg-canvas" width="2048" height="1536"></canvas>
+        </div>
+        <div id="layer1pane" class="legacy-hidden-pane">
+          <canvas id="level1" class="bg-canvas" width="2048" height="1536"></canvas>
+        </div>
+        <div id="layer2pane" class="legacy-hidden-pane">
+          <canvas id="level3" class="bg-canvas" width="2048" height="1536"></canvas>
+        </div>
+        <div id="layer3pane" class="legacy-hidden-pane">
+          <canvas id="level4" class="bg-canvas" width="2048" height="1536"></canvas>
+        </div>
+
+        <!-- 兼容旧 map 视图初始化 -->
+        <div id="map" class="legacy-hidden-pane tabcontent">
+          <canvas id="mapcanvas" width="2048" height="1536"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右侧属性区 -->
+    <aside id="app-inspector">
+      <!-- 地形面板 -->
+      <div class="inspector-panel" id="panel-terrain">
+        <div class="panel-section">
+          <h3 class="panel-title">激活图层</h3>
+          <div id="active-layer-selector">
+            <button class="layer-btn active" data-layer="0" type="button">背景层 0</button>
+            <button class="layer-btn" data-layer="1" type="button">背景层 1</button>
+            <button class="layer-btn" data-layer="2" type="button">物件层 0</button>
+            <button class="layer-btn" data-layer="3" type="button">物件层 1</button>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h3 class="panel-title">瓦片选择</h3>
+          <div id="tileset-container">
+            <div id="tilesetpane">
+              <canvas id="tileset" width="5632" height="8672"></canvas>
+            </div>
+          </div>
+        </div>
       </div>
 
-<div id="edit" class="tabcontent">
-    <TABLE WIDTH="100%"><TR>
-        <TD ALIGN="center"> <!-- first layer of map tiles -->
-          <div ID="layer0pane" style="max-height: 480px;max-width:640px;overflow: scroll;">
-          <canvas ID="level0" height="1600px" width="1600px" ></canvas> </div>   
-        </TD>
-        <TD ALIGN="center"> <!-- tile set-->
-           <div ID="tilesetpane" style="max-height: 600;max-width:800;overflow: scroll;">
-           <CANVAS ID="tileset" width="5632px" height="8672px" STYLE="border: 1px dotted white;"></CANVAS> </div>   
-        </TD>
-        </TR>
+      <!-- 图层管理面板 -->
+      <div class="inspector-panel hidden" id="panel-layers">
+        <div class="panel-section">
+          <h3 class="panel-title">图层列表</h3>
+          <div id="layer-list">
+            <div class="layer-item" data-layer="0"><span>背景层 0</span><button type="button">显隐</button><button type="button">锁定</button></div>
+            <div class="layer-item" data-layer="1"><span>背景层 1</span><button type="button">显隐</button><button type="button">锁定</button></div>
+            <div class="layer-item" data-layer="2"><span>物件层 0</span><button type="button">显隐</button><button type="button">锁定</button></div>
+            <div class="layer-item" data-layer="3"><span>物件层 1</span><button type="button">显隐</button><button type="button">锁定</button></div>
+          </div>
+        </div>
+      </div>
 
-        <tr>
-        <TD ALIGN="center"> <!-- second layer of map tiles -->
-        <div ID="layer1pane" style="max-height: 480px;max-width:640px;overflow: scroll;">
-            <canvas ID="level1" height="1600px" width="1600px" ></canvas>
-        </div></TD>
-        <TD ALIGN="center"> <!-- aggregate map view -->
-        <div ID="compositepane" style="max-height: 600;max-width:800;overflow: scroll;">
-            <canvas ID="composite" height="1600px" width="1600px" ></canvas>
-        </div></TD>
-        </tr>
-
-        <tr>
-        <TD ALIGN="center"> <!-- object layer of map -->
-        <div ID="layer2pane" style="max-height: 480px;max-width:640px;overflow: scroll;">
-            <canvas ID="level3" height="1600px" width="1600px" ></canvas>
-        </div></TD>
-        <TD ALIGN="center"> <!-- object layer of map -->
-        <div ID="layer3pane" style="max-height: 480px;max-width:640px;overflow: scroll;">
-            <canvas ID="level4" height="1600px" width="1600px" ></canvas>
-        </div></TD>
-        </tr>
-    </TABLE>
-</div>
-
-<div id="map" class="tabcontent">
-        <canvas id="mapcanvas" height="1600px" width="1600px" ></canvas>
-</div>
-
-<div id="config" class="tabcontent">
-            <table>
-            <tr>
-                <td>Composite to png</td>
-                <td>Load level</td>
-                <td>Load png to Composite</td>
-                <td>Load Sprite</td>
-                <td></td>
-            </tr>
-            <tr>
-            <td>
-            <button onclick = "saveCompositeAsImage()" > Save Composite </button>
-            </td><td>
-            <input type="file" multiple id="levelfile">
-            </td><td>
-            <input type="file" multiple id="compositepng">
-            </td><td>
-            <input type="file" multiple id="spritesheet">
-            </td><td>
-            <form name="myForm">
-                16 <input type="radio" name="radioTiledim"  value="16" />
-                32 <input type="radio" name="radioTiledim"  value="32" checked />
-              </form>
-              </td>
-            </tr>
-
-            <tr>
-                <td>Load Tileset</td>
-            </tr>
-            <tr>
-                <td> <input type="file" multiple id="tilesetfile"> </td>
-            </tr>
-
-
-            </table>
-</div>
-
-<div id="semantic" class="tabcontent">
-    <div class="semantic-toolbar">
-        <button id="semantic-toggle-panel" class="semantic-collapse-btn" type="button" aria-expanded="true" aria-controls="semantic-panel-body">
+      <!-- 语义面板头部：折叠后依然可见 -->
+      <div class="inspector-panel hidden" id="semantic-panel-header">
+        <div class="panel-section">
+          <button id="semantic-toggle-panel" class="semantic-collapse-btn" type="button" aria-expanded="true" aria-controls="semantic-panel-body">
             <span class="semantic-collapse-icon" aria-hidden="true">▼</span>
             <span class="semantic-collapse-text">收起面板</span>
-        </button>
-        <div class="semantic-mode-wrap">
+          </button>
+
+          <div class="semantic-mode-wrap">
             <div class="semantic-mode-segment" role="group" aria-label="语义编辑模式切换">
-                <button id="semantic-normal-toggle" class="semantic-mode-btn is-active" type="button" aria-pressed="true">普通模式</button>
-                <button id="semantic-placement-toggle" class="semantic-mode-btn" type="button" aria-pressed="false">物体放置</button>
-                <button id="semantic-zone-toggle" class="semantic-mode-btn" type="button" aria-pressed="false">区域绘制</button>
+              <button id="semantic-normal-toggle" class="semantic-mode-btn is-active" type="button" aria-pressed="true">普通模式</button>
+              <button id="semantic-placement-toggle" class="semantic-mode-btn" type="button" aria-pressed="false">物体放置</button>
+              <button id="semantic-zone-toggle" class="semantic-mode-btn" type="button" aria-pressed="false">区域绘制</button>
             </div>
             <span id="semantic-placement-status" class="semantic-mode-status" aria-live="polite">当前：普通绘制模式</span>
+          </div>
         </div>
-    </div>
+      </div>
 
-    <div id="semantic-panel-body">
-        <table class="semantic-grid-two" width="100%">
-            <tr>
-                <td class="semantic-col-list" width="40%" valign="top">
-                    <h3>物体列表</h3>
-                    <ul id="semantic-object-list" class="semantic-list"></ul>
-                    <div class="semantic-actions">
-                        <button id="semantic-new-object" class="semantic-btn" type="button">新建物体</button>
-                        <button id="semantic-delete-object" class="semantic-btn semantic-btn-danger" type="button">删除选中</button>
-                    </div>
-                </td>
-                <td class="semantic-col-form" width="60%" valign="top">
-                    <h3>物体创建 / 编辑</h3>
-                    <form id="semantic-object-form" class="semantic-form-grid" autocomplete="off">
-                        <div class="semantic-field">
-                            <label for="semantic-key">Key</label>
-                            <input id="semantic-key" name="key" type="text" required />
-                        </div>
-                        <div class="semantic-field">
-                            <label for="semantic-name">名称</label>
-                            <input id="semantic-name" name="name" type="text" required />
-                        </div>
-                        <div class="semantic-field">
-                            <label for="semantic-category">分类</label>
-                            <input id="semantic-category" name="category" type="text" />
-                        </div>
-                        <div class="semantic-field">
-                            <label for="semantic-interaction-hint">交互提示</label>
-                            <input id="semantic-interaction-hint" name="interactionHint" type="text" />
-                        </div>
-                        <div class="semantic-field semantic-field--full">
-                            <label for="semantic-description">描述</label>
-                            <textarea id="semantic-description" name="description" rows="3" cols="50"></textarea>
-                        </div>
-                        <div class="semantic-field semantic-field--full">
-                            <label for="semantic-occupied-tiles">占地（每行 dx,dy）</label>
-                            <textarea id="semantic-occupied-tiles" name="occupiedTiles" rows="4" cols="30">0,0</textarea>
-                        </div>
-                        <div class="semantic-field semantic-field-checkbox">
-                            <label for="semantic-blocks-movement">
-                                <input id="semantic-blocks-movement" name="blocksMovement" type="checkbox" checked />
-                                阻挡移动
-                            </label>
-                        </div>
-                        <div class="semantic-actions semantic-field--full">
-                            <button id="semantic-save-object" class="semantic-btn semantic-btn-primary" type="submit">保存物体</button>
-                            <button id="semantic-reset-form" class="semantic-btn" type="button">重置表单</button>
-                        </div>
-                    </form>
-                </td>
-            </tr>
-        </table>
+      <!-- 语义面板容器：保留 semantic-panel-body 供现有逻辑使用 -->
+      <div id="semantic-panel-body">
+        <!-- 语义物体面板 -->
+        <div class="inspector-panel hidden" id="panel-sem-objects">
+          <div class="panel-section">
+            <h3 class="panel-title">物体列表</h3>
+            <ul id="semantic-object-list" class="semantic-list"></ul>
+            <div class="btn-row">
+              <button id="semantic-new-object" class="semantic-btn" type="button">新建物体</button>
+              <button id="semantic-delete-object" class="semantic-btn btn-danger" type="button">删除选中</button>
+            </div>
+          </div>
 
-        <hr style="margin: 16px 0;" />
+          <div class="panel-section">
+            <h3 class="panel-title">物体创建 / 编辑</h3>
+            <form id="semantic-object-form" class="semantic-form-grid" autocomplete="off">
+              <div class="semantic-field">
+                <label for="semantic-key">Key</label>
+                <input id="semantic-key" name="key" type="text" required />
+              </div>
+              <div class="semantic-field">
+                <label for="semantic-name">名称</label>
+                <input id="semantic-name" name="name" type="text" required />
+              </div>
+              <div class="semantic-field">
+                <label for="semantic-category">分类</label>
+                <input id="semantic-category" name="category" type="text" />
+              </div>
+              <div class="semantic-field">
+                <label for="semantic-interaction-hint">交互提示</label>
+                <input id="semantic-interaction-hint" name="interactionHint" type="text" />
+              </div>
+              <div class="semantic-field semantic-field--full">
+                <label for="semantic-description">描述</label>
+                <textarea id="semantic-description" name="description" rows="3" cols="50"></textarea>
+              </div>
+              <div class="semantic-field semantic-field--full">
+                <label for="semantic-occupied-tiles">占地（每行 dx,dy）</label>
+                <textarea id="semantic-occupied-tiles" name="occupiedTiles" rows="4" cols="30">0,0</textarea>
+              </div>
+              <div class="semantic-field semantic-field-checkbox">
+                <label for="semantic-blocks-movement">
+                  <input id="semantic-blocks-movement" name="blocksMovement" type="checkbox" checked />
+                  阻挡移动
+                </label>
+              </div>
+              <div class="btn-row">
+                <button id="semantic-save-object" class="semantic-btn" type="submit">保存物体</button>
+                <button id="semantic-reset-form" class="semantic-btn" type="button">重置表单</button>
+              </div>
+            </form>
+          </div>
+        </div>
 
-        <table class="semantic-grid-two" width="100%">
-            <tr>
-                <td class="semantic-col-list" width="40%" valign="top">
-                    <h3>区域列表</h3>
-                    <ul id="semantic-zone-list" class="semantic-list"></ul>
-                    <div class="semantic-actions">
-                        <button id="semantic-new-zone" class="semantic-btn" type="button">新建区域</button>
-                        <button id="semantic-delete-zone" class="semantic-btn semantic-btn-danger" type="button">删除选中区域</button>
-                    </div>
-                </td>
-                <td class="semantic-col-form" width="60%" valign="top">
-                    <h3>区域创建 / 编辑</h3>
-                    <form id="semantic-zone-form" class="semantic-form-grid" autocomplete="off">
-                        <div class="semantic-field">
-                            <label for="semantic-zone-name">名称</label>
-                            <input id="semantic-zone-name" name="zoneName" type="text" required />
-                        </div>
-                        <div class="semantic-field">
-                            <label for="semantic-zone-priority">优先级</label>
-                            <input id="semantic-zone-priority" name="zonePriority" type="number" value="0" />
-                        </div>
-                        <div class="semantic-field semantic-field--full">
-                            <label for="semantic-zone-description">描述</label>
-                            <textarea id="semantic-zone-description" name="zoneDescription" rows="3" cols="50"></textarea>
-                        </div>
-                        <div class="semantic-field semantic-field--full">
-                            <label for="semantic-zone-activities">推荐活动（每行一个）</label>
-                            <textarea id="semantic-zone-activities" name="zoneActivities" rows="4" cols="50"></textarea>
-                        </div>
-                        <div class="semantic-actions semantic-field--full">
-                            <button id="semantic-save-zone" class="semantic-btn semantic-btn-primary" type="submit">保存区域信息</button>
-                            <button id="semantic-reset-zone-form" class="semantic-btn" type="button">重置区域表单</button>
-                        </div>
-                    </form>
-                    <div id="semantic-zone-primary">该格子主区域：无</div>
-                </td>
-            </tr>
-        </table>
-    </div>
-</div>
+        <!-- 语义区域面板 -->
+        <div class="inspector-panel hidden" id="panel-sem-zones">
+          <div class="panel-section">
+            <h3 class="panel-title">区域列表</h3>
+            <ul id="semantic-zone-list" class="semantic-list"></ul>
+            <div class="btn-row">
+              <button id="semantic-new-zone" class="semantic-btn" type="button">新建区域</button>
+              <button id="semantic-delete-zone" class="semantic-btn btn-danger" type="button">删除选中区域</button>
+            </div>
+          </div>
 
+          <div class="panel-section">
+            <h3 class="panel-title">区域创建 / 编辑</h3>
+            <form id="semantic-zone-form" class="semantic-form-grid" autocomplete="off">
+              <div class="semantic-field">
+                <label for="semantic-zone-name">名称</label>
+                <input id="semantic-zone-name" name="zoneName" type="text" required />
+              </div>
+              <div class="semantic-field">
+                <label for="semantic-zone-priority">优先级</label>
+                <input id="semantic-zone-priority" name="zonePriority" type="number" value="0" />
+              </div>
+              <div class="semantic-field semantic-field--full">
+                <label for="semantic-zone-description">描述</label>
+                <textarea id="semantic-zone-description" name="zoneDescription" rows="3" cols="50"></textarea>
+              </div>
+              <div class="semantic-field semantic-field--full">
+                <label for="semantic-zone-activities">推荐活动（每行一个）</label>
+                <textarea id="semantic-zone-activities" name="zoneActivities" rows="4" cols="50"></textarea>
+              </div>
+              <div class="btn-row">
+                <button id="semantic-save-zone" class="semantic-btn" type="submit">保存区域信息</button>
+                <button id="semantic-reset-zone-form" class="semantic-btn" type="button">重置区域表单</button>
+              </div>
+            </form>
+            <div id="semantic-zone-primary">该格子主区域：无</div>
+          </div>
+        </div>
+      </div>
 
+      <!-- 文件面板 -->
+      <div class="inspector-panel hidden" id="panel-files">
+        <div class="panel-section">
+          <h3 class="panel-title">地图文件</h3>
+          <button type="button" onclick="document.getElementById('levelfile').click()">加载地图</button>
+          <input id="levelfile" type="file" multiple hidden accept=".js" />
+        </div>
+
+        <div class="panel-section">
+          <h3 class="panel-title">Tileset</h3>
+          <button type="button" onclick="document.getElementById('tilesetfile').click()">更换 Tileset</button>
+          <input id="tilesetfile" type="file" multiple hidden accept=".png,.jpg" />
+        </div>
+
+        <div class="panel-section">
+          <h3 class="panel-title">精灵动画</h3>
+          <button type="button" onclick="document.getElementById('spritesheet').click()">加载 Spritesheet</button>
+          <input id="spritesheet" type="file" multiple hidden accept=".png" />
+        </div>
+
+        <div class="panel-section">
+          <h3 class="panel-title">底图参考</h3>
+          <button type="button" onclick="document.getElementById('compositepng').click()">加载底图 PNG</button>
+          <input id="compositepng" type="file" multiple hidden accept=".png" />
+        </div>
+
+        <div class="panel-section">
+          <h3 class="panel-title">导出</h3>
+          <button id="btn-save-composite" type="button" onclick="saveCompositeAsImage()">导出合成 PNG</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- 底部状态栏 -->
+  <div id="app-statusbar">
+    <span id="status-layer">图层：背景层0</span>
+    <span id="status-coord">坐标：-</span>
+    <span id="status-mode">模式：地形绘制</span>
+    <span id="status-zone">主区域：-</span>
+  </div>
+
+  <script src="le.js" type="module"></script>
 </body>
 </html>

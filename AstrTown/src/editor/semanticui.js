@@ -213,7 +213,7 @@ export async function initSemanticUI(g_ctx, options = {}) {
   const state = {
     catalog: loadCatalogFromDataFile(),
     selectedCatalogKey: null,
-    mode: 'normal',
+    mode: 'terrain',
     panelCollapsed: false,
     worldSemantic: {
       objectInstances: [],
@@ -264,28 +264,99 @@ export async function initSemanticUI(g_ctx, options = {}) {
     button.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
 
+  function semanticModeToEditorMode(mode) {
+    if (mode === 'object') {
+      return 'object';
+    }
+    if (mode === 'zone') {
+      return 'zone';
+    }
+    return 'terrain';
+  }
+
+  function semanticModeToSidebarPanel(mode) {
+    if (mode === 'object') {
+      return 'sem-objects';
+    }
+    if (mode === 'zone') {
+      return 'sem-zones';
+    }
+    return 'terrain';
+  }
+
+  function editorModeToSemanticMode(mode) {
+    if (mode === 'object') {
+      return 'object';
+    }
+    if (mode === 'zone') {
+      return 'zone';
+    }
+    return 'terrain';
+  }
+
+  function syncTopToolbarMode(editorMode) {
+    const modeButtons = document.querySelectorAll('.mode-btn');
+    modeButtons.forEach((button) => {
+      const active = button.dataset.mode === editorMode;
+      button.classList.toggle('active', active);
+      button.classList.toggle('is-active', active);
+    });
+  }
+
+  function syncStatusMode(editorMode) {
+    const statusModeEl = document.getElementById('status-mode');
+    if (!statusModeEl) {
+      return;
+    }
+
+    const labels = {
+      terrain: '地形绘制',
+      object: '语义物体',
+      zone: '语义区域',
+    };
+    statusModeEl.textContent = `模式：${labels[editorMode] || editorMode}`;
+  }
+
   function setMode(mode) {
     state.mode = mode;
-    const normalMode = mode === 'normal';
+    const terrainMode = mode === 'terrain';
     const objectMode = mode === 'object';
     const zoneMode = mode === 'zone';
 
+    const editorMode = semanticModeToEditorMode(mode);
+    g_ctx.editorMode = editorMode;
     g_ctx.semanticMode = objectMode || zoneMode;
 
     placer.setPlacementEnabled(objectMode);
     zoner.setDrawingEnabled(zoneMode);
 
-    syncModeButtonState(normalBtn, normalMode);
+    syncModeButtonState(normalBtn, terrainMode);
     syncModeButtonState(placementBtn, objectMode);
     syncModeButtonState(zoneToggleBtn, zoneMode);
+    syncTopToolbarMode(editorMode);
+    syncStatusMode(editorMode);
 
-    if (objectMode) {
-      placementStatus.textContent = '当前：物体放置模式';
-    } else if (zoneMode) {
-      placementStatus.textContent = '当前：区域绘制模式';
-    } else {
-      placementStatus.textContent = '当前：普通绘制模式';
+    const nextSidebarPanel = semanticModeToSidebarPanel(mode);
+    if (
+      typeof options.onSwitchSidebarTab === 'function'
+      && g_ctx.activeSidebarPanel !== nextSidebarPanel
+    ) {
+      options.onSwitchSidebarTab(nextSidebarPanel);
     }
+
+    if (placementStatus) {
+      if (objectMode) {
+        placementStatus.textContent = '当前：物体放置模式';
+      } else if (zoneMode) {
+        placementStatus.textContent = '当前：区域绘制模式';
+      } else {
+        placementStatus.textContent = '当前：普通绘制模式';
+      }
+    }
+  }
+
+  function setEditorMode(mode) {
+    setMode(editorModeToSemanticMode(mode));
   }
 
   function syncZoneContainedInstanceIds(instances) {
@@ -390,19 +461,35 @@ export async function initSemanticUI(g_ctx, options = {}) {
   }
 
   function refreshPrimaryZoneText() {
+    const statusZoneEl = document.getElementById('status-zone');
     const selected = zoner.getSelectedZone();
     if (!selected) {
-      zonePrimaryEl.textContent = '该格子主区域：无';
+      if (zonePrimaryEl) {
+        zonePrimaryEl.textContent = '该格子主区域：无';
+      }
+      if (statusZoneEl) {
+        statusZoneEl.textContent = '主区域：-';
+      }
       return;
     }
 
     const primary = zoner.getPrimaryZoneForZoneCenter(selected.zoneId);
     if (!primary) {
-      zonePrimaryEl.textContent = '该格子主区域：无';
+      if (zonePrimaryEl) {
+        zonePrimaryEl.textContent = '该格子主区域：无';
+      }
+      if (statusZoneEl) {
+        statusZoneEl.textContent = '主区域：-';
+      }
       return;
     }
 
-    zonePrimaryEl.textContent = `该格子主区域：${primary.name} (P${primary.priority})`;
+    if (zonePrimaryEl) {
+      zonePrimaryEl.textContent = `该格子主区域：${primary.name} (P${primary.priority})`;
+    }
+    if (statusZoneEl) {
+      statusZoneEl.textContent = `主区域：${primary.name} (P${primary.priority})`;
+    }
   }
 
   function syncCatalogToGlobal() {
@@ -575,6 +662,10 @@ export async function initSemanticUI(g_ctx, options = {}) {
   }
 
   function togglePanel() {
+    if (!panelBody || !togglePanelBtn) {
+      return;
+    }
+
     state.panelCollapsed = !state.panelCollapsed;
     panelBody.style.display = state.panelCollapsed ? 'none' : 'block';
 
@@ -589,7 +680,7 @@ export async function initSemanticUI(g_ctx, options = {}) {
 
   function togglePlacement() {
     if (state.mode === 'object') {
-      setMode('normal');
+      setMode('terrain');
       return;
     }
     setMode('object');
@@ -597,7 +688,7 @@ export async function initSemanticUI(g_ctx, options = {}) {
 
   function toggleZoneMode() {
     if (state.mode === 'zone') {
-      setMode('normal');
+      setMode('terrain');
       return;
     }
     setMode('zone');
@@ -605,14 +696,14 @@ export async function initSemanticUI(g_ctx, options = {}) {
 
   function setSemanticModeEnabled(enabled) {
     if (enabled) {
-      if (state.mode === 'normal') {
-        setMode('object');
+      if (state.mode === 'zone') {
+        setEditorMode('zone');
       } else {
-        setMode(state.mode);
+        setEditorMode('object');
       }
       return;
     }
-    setMode('normal');
+    setEditorMode('terrain');
   }
 
   function saveZoneMeta() {
@@ -665,52 +756,74 @@ export async function initSemanticUI(g_ctx, options = {}) {
     };
   }
 
-  togglePanelBtn.addEventListener('click', togglePanel);
-  if (normalBtn) {
-    normalBtn.addEventListener('click', () => setMode('normal'));
+  if (togglePanelBtn) {
+    togglePanelBtn.addEventListener('click', togglePanel);
   }
-  placementBtn.addEventListener('click', togglePlacement);
-  zoneToggleBtn.addEventListener('click', toggleZoneMode);
+  if (normalBtn) {
+    normalBtn.addEventListener('click', () => setMode('terrain'));
+  }
+  if (placementBtn) {
+    placementBtn.addEventListener('click', togglePlacement);
+  }
+  if (zoneToggleBtn) {
+    zoneToggleBtn.addEventListener('click', toggleZoneMode);
+  }
 
-  newBtn.addEventListener('click', () => {
-    state.selectedCatalogKey = null;
-    resetForm();
-    renderList();
-  });
+  if (newBtn) {
+    newBtn.addEventListener('click', () => {
+      state.selectedCatalogKey = null;
+      resetForm();
+      renderList();
+    });
+  }
 
-  deleteBtn.addEventListener('click', deleteSelectedCatalog);
-  resetBtn.addEventListener('click', resetForm);
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', deleteSelectedCatalog);
+  }
+  if (resetBtn) {
+    resetBtn.addEventListener('click', resetForm);
+  }
 
-  zoneNewBtn.addEventListener('click', () => {
-    setMode('zone');
-    zoner.selectZone(null);
-    resetZoneForm();
-    renderZoneList();
-    refreshPrimaryZoneText();
-  });
+  if (zoneNewBtn) {
+    zoneNewBtn.addEventListener('click', () => {
+      setMode('zone');
+      zoner.selectZone(null);
+      resetZoneForm();
+      renderZoneList();
+      refreshPrimaryZoneText();
+    });
+  }
 
-  zoneDeleteBtn.addEventListener('click', deleteSelectedZone);
-  zoneResetBtn.addEventListener('click', resetZoneForm);
+  if (zoneDeleteBtn) {
+    zoneDeleteBtn.addEventListener('click', deleteSelectedZone);
+  }
+  if (zoneResetBtn) {
+    zoneResetBtn.addEventListener('click', resetZoneForm);
+  }
 
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const payload = readForm();
-    if (!validateForm(payload)) {
-      return;
-    }
-    upsertCatalogItem(payload);
-  });
+  if (form) {
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const payload = readForm();
+      if (!validateForm(payload)) {
+        return;
+      }
+      upsertCatalogItem(payload);
+    });
+  }
 
-  zoneForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-    saveZoneMeta();
-  });
+  if (zoneForm) {
+    zoneForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      saveZoneMeta();
+    });
+  }
 
   resetForm();
   resetZoneForm();
   renderList();
   renderZoneList();
-  setMode('normal');
+  setMode('terrain');
 
   placer.init();
   zoner.init();
@@ -721,6 +834,7 @@ export async function initSemanticUI(g_ctx, options = {}) {
     placer,
     zoner,
     setSemanticModeEnabled,
+    setEditorMode,
     loadFromMapModule,
     getSemanticSnapshot,
     refreshCatalog() {

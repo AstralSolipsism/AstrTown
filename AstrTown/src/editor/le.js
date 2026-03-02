@@ -50,6 +50,29 @@ import { EventSystem } from '@pixi/events';
 g_ctx.debug_flag  = true;
 g_ctx.debug_flag2 = false; // really verbose output
 
+g_ctx.activeLayer = 0;
+g_ctx.activeSidebarPanel = 'terrain';
+g_ctx.editorMode = 'terrain';
+g_ctx._workspaceUIBound = false;
+g_ctx.compositeDragLayer = null;
+g_ctx.compositeDragging = false;
+
+const SIDEBAR_PANEL_TO_INSPECTOR = {
+    terrain: 'panel-terrain',
+    layers: 'panel-layers',
+    'sem-objects': 'panel-sem-objects',
+    'sem-zones': 'panel-sem-zones',
+    files: 'panel-files',
+};
+
+const EDITOR_MODE_LABEL = {
+    terrain: '地形绘制',
+    object: '语义物体',
+    zone: '语义区域',
+};
+
+const LAYER_LABEL = ['背景层0', '背景层1', '物件层0', '物件层1'];
+
 function tileset_index_from_coords(x, y) {
     let retme = x + (y*g_ctx.tilesettilew);
     console.log("tileset_index_from_coord ",retme, x, y);
@@ -397,6 +420,10 @@ class CompositeContext {
         this.container.addChild(this.square);
 
         this.square.on('mousedown', onCompositeMousedown.bind(null, this));
+        this.square.on('pointerdown', onCompositePointerDown.bind(null, this));
+        this.square.on('pointermove', onCompositePointerMove.bind(null, this));
+        this.square.on('pointerup', onCompositePointerUp.bind(null, this));
+        this.square.on('pointerupoutside', onCompositePointerUp.bind(null, this));
     }
 
 } // class CompositeContext
@@ -440,7 +467,13 @@ function loadAnimatedSpritesFromModule(mod){
 }
 
 function loadMapFromModuleFinish(mod) {
+    const compositeSquare = g_ctx.composite?.square || null;
+
     g_ctx.composite.container.removeChildren();
+    if (compositeSquare) {
+        g_ctx.composite.container.addChildAt(compositeSquare, 0);
+    }
+
     g_ctx.tileset_app.stage.removeChildren()
     g_ctx.tileset = new TilesetContext(g_ctx.tileset_app, mod);
     g_ctx.g_layer_apps[0].stage.removeChildren()
@@ -496,31 +529,179 @@ window.saveCompositeAsImage = () => {
     downloadpng("g_ctx.composite.png");
 }
 
-window.onTab = (evt, tabName) => {
-    // Declare all variables
-    var i, tabcontent, tablinks;
+function updateStatusLayer() {
+    const el = document.getElementById('status-layer');
+    if (!el) {
+        return;
+    }
+    const label = LAYER_LABEL[g_ctx.activeLayer] || ('图层' + g_ctx.activeLayer);
+    el.textContent = '图层：' + label;
+}
 
-    // Get all elements with class="tabcontent" and hide them
-    tabcontent = document.getElementsByClassName("tabcontent");
-    for (i = 0; i < tabcontent.length; i++) {
-        tabcontent[i].style.display = "none";
+function updateStatusMode() {
+    const el = document.getElementById('status-mode');
+    if (!el) {
+        return;
+    }
+    const label = EDITOR_MODE_LABEL[g_ctx.editorMode] || g_ctx.editorMode;
+    el.textContent = '模式：' + label;
+}
+
+function updateStatusCoordFromGlobal(x, y) {
+    const el = document.getElementById('status-coord');
+    if (!el) {
+        return;
+    }
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        el.textContent = '坐标：-';
+        return;
+    }
+    const tx = Math.floor(x / g_ctx.tiledimx);
+    const ty = Math.floor(y / g_ctx.tiledimy);
+    el.textContent = '坐标：(' + tx + ',' + ty + ')';
+}
+
+function setSemanticMode(enabled) {
+    g_ctx.semanticMode = !!enabled;
+    if (g_ctx.semantic && typeof g_ctx.semantic.setSemanticModeEnabled === 'function') {
+        g_ctx.semantic.setSemanticModeEnabled(g_ctx.semanticMode);
+    }
+}
+
+function setEditorMode(mode) {
+    const nextMode = mode || 'terrain';
+    g_ctx.editorMode = nextMode;
+
+    if (g_ctx.semantic && typeof g_ctx.semantic.setEditorMode === 'function') {
+        g_ctx.semantic.setEditorMode(nextMode);
+        g_ctx.semanticMode = nextMode !== 'terrain';
+    } else if (nextMode === 'terrain') {
+        setSemanticMode(false);
+    } else {
+        setSemanticMode(true);
     }
 
-    // Get all elements with class="tablinks" and remove the class "active"
-    tablinks = document.getElementsByClassName("tablinks");
-    for (i = 0; i < tablinks.length; i++) {
-        tablinks[i].className = tablinks[i].className.replace(" active", "");
+    const modeButtons = document.querySelectorAll('.mode-btn');
+    modeButtons.forEach((button) => {
+        const active = button.dataset.mode === nextMode;
+        button.classList.toggle('active', active);
+        button.classList.toggle('is-active', active);
+    });
+
+    updateStatusMode();
+}
+
+function setActiveLayer(layerIndex) {
+    const nextIndex = Number(layerIndex);
+    if (!Number.isFinite(nextIndex) || nextIndex < 0 || nextIndex > 3) {
+        return;
     }
 
-    // Show the current tab, and add an "active" class to the button that opened the tab
-    document.getElementById(tabName).style.display = "block";
-    evt.currentTarget.className += " active";
+    g_ctx.activeLayer = nextIndex;
 
-    if (tabName == "map"){
-        g_ctx.map_app.stage.addChild(g_ctx.composite.container);
-    }else {
-        g_ctx.composite.app.stage.addChild(g_ctx.composite.container);
+    const layerButtons = document.querySelectorAll('.layer-btn');
+    layerButtons.forEach((button) => {
+        const active = Number(button.dataset.layer) === nextIndex;
+        button.classList.toggle('active', active);
+        button.classList.toggle('is-active', active);
+    });
+
+    updateStatusLayer();
+}
+
+function switchSidebarTab(panelName) {
+    const panel = panelName || 'terrain';
+    g_ctx.activeSidebarPanel = panel;
+
+    const sidebarButtons = document.querySelectorAll('.sidebar-btn');
+    sidebarButtons.forEach((button) => {
+        const active = button.dataset.panel === panel;
+        button.classList.toggle('active', active);
+        button.classList.toggle('is-active', active);
+    });
+
+    const panels = document.querySelectorAll('.inspector-panel');
+    panels.forEach((node) => node.classList.add('hidden'));
+
+    const semanticHeader = document.getElementById('semantic-panel-header');
+    if (semanticHeader) {
+        semanticHeader.classList.add('hidden');
     }
+
+    const targetId = SIDEBAR_PANEL_TO_INSPECTOR[panel];
+    if (targetId) {
+        const target = document.getElementById(targetId);
+        if (target) {
+            target.classList.remove('hidden');
+        }
+    }
+
+    if (panel === 'sem-objects' || panel === 'sem-zones') {
+        if (semanticHeader) {
+            semanticHeader.classList.remove('hidden');
+        }
+    }
+
+    if (panel === 'terrain' || panel === 'layers' || panel === 'files') {
+        setEditorMode('terrain');
+    } else if (panel === 'sem-objects') {
+        setEditorMode('object');
+    } else if (panel === 'sem-zones') {
+        setEditorMode('zone');
+    }
+}
+
+function bindWorkspaceUI() {
+    if (g_ctx._workspaceUIBound) {
+        return;
+    }
+
+    const sidebarButtons = document.querySelectorAll('.sidebar-btn');
+    sidebarButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            switchSidebarTab(button.dataset.panel);
+        });
+    });
+
+    const layerButtons = document.querySelectorAll('.layer-btn');
+    layerButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            setActiveLayer(Number(button.dataset.layer));
+        });
+    });
+
+    const modeButtons = document.querySelectorAll('.mode-btn');
+    modeButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            setEditorMode(button.dataset.mode);
+            if (button.dataset.mode === 'object') {
+                switchSidebarTab('sem-objects');
+            } else if (button.dataset.mode === 'zone') {
+                switchSidebarTab('sem-zones');
+            } else {
+                switchSidebarTab('terrain');
+            }
+        });
+    });
+
+    const saveButton = document.getElementById('btn-save');
+    if (saveButton) {
+        saveButton.addEventListener('click', () => MAPFILE.generate_level_file());
+    }
+
+    const undoButton = document.getElementById('btn-undo');
+    if (undoButton) {
+        undoButton.addEventListener('click', () => {
+            const event = new KeyboardEvent('keydown', { ctrlKey: true, code: 'KeyZ' });
+            window.dispatchEvent(event);
+        });
+    }
+
+    g_ctx._workspaceUIBound = true;
+
+    setActiveLayer(g_ctx.activeLayer || 0);
+    switchSidebarTab(g_ctx.activeSidebarPanel || 'terrain');
+    updateStatusCoordFromGlobal(NaN, NaN);
 }
 
 // fill base level with currentIndex tile 
@@ -796,9 +977,12 @@ function redrawGrid(pane, redraw = false) {
 // --
 
 function centerCompositePane(x, y){
-    var compositepane = document.getElementById("compositepane");
-    compositepane.scrollLeft = x - (CONFIG.htmlCompositePaneW/2);
-    compositepane.scrollTop  = y - (CONFIG.htmlCompositePaneH/2);
+    const compositepane = document.getElementById("compositepane");
+    if (!compositepane) {
+        return;
+    }
+    compositepane.scrollLeft = x - (compositepane.clientWidth / 2);
+    compositepane.scrollTop = y - (compositepane.clientHeight / 2);
 }
 
 function getOldTileValue(layer, x, y) {
@@ -807,11 +991,13 @@ function getOldTileValue(layer, x, y) {
 }
 
 function centerLayerPanes(x, y){
-    // TODO remove magic number pulled from index.html
-    g_ctx.g_layers.map((l) => {
-        l.scrollpane.scrollLeft = x - (CONFIG.htmlLayerPaneW/2);
-        l.scrollpane.scrollTop  = y - (CONFIG.htmlLayerPaneH/2);
-      });
+    const compositePane = document.getElementById('compositepane');
+    if (!compositePane) {
+        return;
+    }
+
+    compositePane.scrollLeft = x - (compositePane.clientWidth / 2);
+    compositePane.scrollTop = y - (compositePane.clientHeight / 2);
 }
 
 function onLevelMouseover(e) {
@@ -933,12 +1119,63 @@ function onCompositeMousedown(layer, e) {
         console.log('onCompositeMouseDown: X', e.data.global.x, 'Y', e.data.global.y);
     }
 
-    let xorig = e.data.global.x;
-    let yorig = e.data.global.y;
+    const xorig = e.data.global.x;
+    const yorig = e.data.global.y;
+    updateStatusCoordFromGlobal(xorig, yorig);
 
-    centerLayerPanes(xorig,yorig);
+    const compositePane = document.getElementById('compositepane');
+    if (!compositePane) {
+        return;
+    }
+
+    // 单视口模式下保持点击点在视口中心附近
+    compositePane.scrollLeft = xorig - (compositePane.clientWidth / 2);
+    compositePane.scrollTop = yorig - (compositePane.clientHeight / 2);
 }
 
+function getActiveLayer() {
+    const layer = g_ctx.g_layers[g_ctx.activeLayer];
+    return layer || null;
+}
+
+function onCompositePointerDown(compositeCtx, e) {
+    updateStatusCoordFromGlobal(e.data.global.x, e.data.global.y);
+
+    if (g_ctx.editorMode !== 'terrain' || isSemanticPlacementEnabled()) {
+        return;
+    }
+
+    const layer = getActiveLayer();
+    if (!layer) {
+        return;
+    }
+
+    g_ctx.compositeDragLayer = layer;
+    g_ctx.compositeDragging = true;
+    onLevelPointerDown(layer, e);
+}
+
+function onCompositePointerMove(compositeCtx, e) {
+    updateStatusCoordFromGlobal(e.data.global.x, e.data.global.y);
+
+    if (!g_ctx.compositeDragging || !g_ctx.compositeDragLayer) {
+        return;
+    }
+
+    onLevelDrag(g_ctx.compositeDragLayer, e);
+}
+
+function onCompositePointerUp(compositeCtx, e) {
+    updateStatusCoordFromGlobal(e.data.global.x, e.data.global.y);
+
+    if (!g_ctx.compositeDragging || !g_ctx.compositeDragLayer) {
+        return;
+    }
+
+    onLevelDragEnd(g_ctx.compositeDragLayer, e);
+    g_ctx.compositeDragging = false;
+    g_ctx.compositeDragLayer = null;
+}
 
 function isSemanticPlacementEnabled() {
     return g_ctx.semanticMode === true;
@@ -984,7 +1221,10 @@ function onLevelPointerDown(layer, e)
         console.log("onLevelPointerDown()");
     }
     layer.app.stage.eventMode = 'static';
-    layer.app.stage.addEventListener('pointermove', onLevelDrag.bind(null, layer, e));
+    if (!layer._boundDragHandler) {
+        layer._boundDragHandler = onLevelDrag.bind(null, layer);
+    }
+    layer.app.stage.addEventListener('pointermove', layer._boundDragHandler);
 
     layer.container.removeChild(layer.mouseshadow);
     g_ctx.composite.container.removeChild(g_ctx.composite.mouseshadow);
@@ -994,8 +1234,9 @@ function onLevelPointerDown(layer, e)
     layer.dragctx.endx = e.data.global.x;
     layer.dragctx.endy = e.data.global.y;
 
-    layer.app.stage.addChild(layer.dragctx.square);
-    layer.app.stage.addChild(layer.dragctx.tooltip);
+    const dragOverlayStage = g_ctx.composite_app?.stage || layer.app.stage;
+    dragOverlayStage.addChild(layer.dragctx.square);
+    dragOverlayStage.addChild(layer.dragctx.tooltip);
 }
 
 function onLevelDrag(layer, e)
@@ -1064,8 +1305,15 @@ function onLevelDragEnd(layer, e)
     g_ctx.composite.container.addChild(g_ctx.composite.mouseshadow);
 
     layer.app.stage.eventMode = 'auto';
-    layer.app.stage.removeChild(layer.dragctx.square);
-    layer.app.stage.removeChild(layer.dragctx.tooltip);
+    if (layer._boundDragHandler) {
+        layer.app.stage.removeEventListener('pointermove', layer._boundDragHandler);
+    }
+    if (layer.dragctx.square.parent) {
+        layer.dragctx.square.parent.removeChild(layer.dragctx.square);
+    }
+    if (layer.dragctx.tooltip.parent) {
+        layer.dragctx.tooltip.parent.removeChild(layer.dragctx.tooltip);
+    }
 
     let starttilex = Math.floor(layer.dragctx.startx / g_ctx.tiledimx);
     let starttiley = Math.floor(layer.dragctx.starty / g_ctx.tiledimx);
@@ -1379,20 +1627,21 @@ async function init() {
     initRadios();
     initTiles();
 
-    g_ctx.semantic = await initSemanticUI(g_ctx);
+    g_ctx.semantic = await initSemanticUI(g_ctx, {
+        onSwitchSidebarTab: switchSidebarTab,
+    });
 
-    const setSemanticMode = (enabled) => {
-        g_ctx.semanticMode = !!enabled;
-        if (g_ctx.semantic && typeof g_ctx.semantic.setSemanticModeEnabled === 'function') {
-            g_ctx.semantic.setSemanticModeEnabled(g_ctx.semanticMode);
-        }
-    };
-
-    setSemanticMode(false);
+    setEditorMode('terrain');
 
     window.addEventListener('keydown', (event) => {
         if (event.code === 'KeyV') {
-            setSemanticMode(!g_ctx.semanticMode);
+            const nextMode = g_ctx.semanticMode ? 'terrain' : 'object';
+            setEditorMode(nextMode);
+            if (nextMode === 'object') {
+                switchSidebarTab('sem-objects');
+            } else {
+                switchSidebarTab('terrain');
+            }
         }
     });
 
@@ -1400,6 +1649,8 @@ async function init() {
     UI.initCompositePNGLoader();
     UI.initSpriteSheetLoader();
     UI.initTilesetLoader( loadMapFromModule.bind(null, g_ctx));
+
+    bindWorkspaceUI();
 }
 
 init();
