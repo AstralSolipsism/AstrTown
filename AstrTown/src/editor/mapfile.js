@@ -22,6 +22,15 @@ const bgtile_string_start = '' +
     'export const bgtiles = [\n' +
     '   [\n'
 
+function buildAnimatedMetaKey(atile) {
+    const layer = Number.isFinite(Number(atile?.layer)) ? Number(atile.layer) : -1;
+    const x = Number.isFinite(Number(atile?.x)) ? Number(atile.x) : -1;
+    const y = Number.isFinite(Number(atile?.y)) ? Number(atile.y) : -1;
+    const sheet = typeof atile?.spritesheetname === 'string' ? atile.spritesheetname : '';
+    const animation = typeof atile?.animationname === 'string' ? atile.animationname : '';
+    return `${layer}:${x}:${y}:${sheet}:${animation}`;
+}
+
 function write_map_file(bg_tiles_0, bg_tiles_1, obj_tiles_1, obj_tiles_2, animated_tiles, object_instances = [], zones = []){
     let text = generate_preamble(); 
     text += bgtile_string_start;
@@ -83,14 +92,27 @@ function write_map_file(bg_tiles_0, bg_tiles_1, obj_tiles_1, obj_tiles_2, animat
     text += ''+
     'export const animatedsprites = [\n';
 
+    const animatedMeta = {};
+
     for(let x = 0 ; x < animated_tiles.length; x++){
         let atile = animated_tiles[x];
-        text += '{ x: '+atile.x+", y: "+ atile.y+ ", w: "+ atile.width+ ", h: "+ atile.height ; 
+        text += '{ x: '+atile.x+", y: "+ atile.y+ ", w: "+ atile.width+ ", h: "+ atile.height ;
         text += ', layer: '+atile.layer;
         text += ', sheet: "'+ atile.spritesheetname+ '", animation: "'+ atile.animationname+'" },\n';
+
+        const key = buildAnimatedMetaKey(atile);
+        animatedMeta[key] = {
+            speed: Number.isFinite(Number(atile.sceneAnimSpeed ?? atile.animationSpeed))
+                ? Number(atile.sceneAnimSpeed ?? atile.animationSpeed)
+                : 0.1,
+            loop: typeof atile.sceneAnimLoop === 'boolean'
+                ? atile.sceneAnimLoop
+                : (typeof atile.loop === 'boolean' ? atile.loop : true),
+        };
     }
 
     text += '];\n\n';
+    text += 'export const animatedspritesMeta = ' + JSON.stringify(animatedMeta, null, 2) + ';\n\n';
     text += 'export const mapwidth = bgtiles[0][0].length;\n';
     text += 'export const mapheight = bgtiles[0].length;\n\n';
     text += 'export const objectInstances = ' + JSON.stringify(object_instances, null, 2) + ';\n';

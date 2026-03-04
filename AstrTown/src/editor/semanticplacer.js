@@ -45,15 +45,104 @@ function parseObjectNote(raw) {
   return raw.trim();
 }
 
-function buildVisual(instance, catalogItem, tileDim, selected) {
-  const container = new PIXI.Container();
-  container.name = 'semantic_instance_' + instance.instanceId;
-  container.interactive = true;
-  container.eventMode = 'dynamic';
-  container.cursor = 'pointer';
-  container.x = instance.x;
-  container.y = instance.y;
+function normalizeAppearance(catalogItem) {
+  const fallbackFrame = catalogItem?.frameConfig || { x: 0, y: 0, width: 32, height: 32 };
+  const fallbackTileUrl = typeof catalogItem?.tileSetUrl === 'string' ? catalogItem.tileSetUrl : '';
 
+  const appearance = catalogItem?.appearance || {};
+  const renderType = ['none', 'static', 'animated'].includes(appearance.renderType)
+    ? appearance.renderType
+    : (fallbackTileUrl || catalogItem?.frameConfig ? 'static' : 'none');
+
+  const sourceType = ['tileset', 'spritesheet'].includes(appearance.sourceType)
+    ? appearance.sourceType
+    : (fallbackTileUrl ? 'tileset' : 'spritesheet');
+
+  return {
+    renderType,
+    sourceType,
+    sheet: String(appearance.sheet || fallbackTileUrl || '').trim(),
+    animationName: String(appearance.animationName || '').trim(),
+    frameConfig: {
+      x: Number.isFinite(Number(appearance?.frameConfig?.x)) ? Number(appearance.frameConfig.x) : Number(fallbackFrame.x) || 0,
+      y: Number.isFinite(Number(appearance?.frameConfig?.y)) ? Number(appearance.frameConfig.y) : Number(fallbackFrame.y) || 0,
+      width: Math.max(1, Number.isFinite(Number(appearance?.frameConfig?.width)) ? Number(appearance.frameConfig.width) : Number(fallbackFrame.width) || 32),
+      height: Math.max(1, Number.isFinite(Number(appearance?.frameConfig?.height)) ? Number(appearance.frameConfig.height) : Number(fallbackFrame.height) || 32),
+    },
+    anchorX: Number.isFinite(Number(appearance.anchorX)) ? Number(appearance.anchorX) : (Number(catalogItem?.anchorX) || 0),
+    anchorY: Number.isFinite(Number(appearance.anchorY)) ? Number(appearance.anchorY) : (Number(catalogItem?.anchorY) || 0),
+    previewScale: Math.max(0.1, Number.isFinite(Number(appearance.previewScale)) ? Number(appearance.previewScale) : 1),
+  };
+}
+
+function ensureTextureCaches(state) {
+  if (!state.textureCache) {
+    state.textureCache = {
+      baseTextureByUrl: new Map(),
+      staticTextureByKey: new Map(),
+      animationsBySheet: new Map(),
+    };
+  }
+  return state.textureCache;
+}
+
+function getStaticTexture(cache, appearance, tileDim, catalogItem, g_ctx) {
+  const sheetUrl = appearance.sourceType === 'tileset'
+    ? (appearance.sheet || catalogItem?.tileSetUrl || g_ctx?.tilesetpath)
+    : appearance.sheet;
+  if (!sheetUrl) {
+    return null;
+  }
+
+  const frame = appearance.frameConfig;
+  const cacheKey = `${sheetUrl}|${frame.x},${frame.y},${frame.width},${frame.height}`;
+  if (cache.staticTextureByKey.has(cacheKey)) {
+    return cache.staticTextureByKey.get(cacheKey);
+  }
+
+  let baseTexture = cache.baseTextureByUrl.get(sheetUrl);
+  if (!baseTexture) {
+    baseTexture = PIXI.BaseTexture.from(sheetUrl, {
+      scaleMode: PIXI.SCALE_MODES.NEAREST,
+    });
+    cache.baseTextureByUrl.set(sheetUrl, baseTexture);
+  }
+
+  const texture = new PIXI.Texture(
+    baseTexture,
+    new PIXI.Rectangle(frame.x, frame.y, frame.width || tileDim, frame.height || tileDim),
+  );
+  cache.staticTextureByKey.set(cacheKey, texture);
+  return texture;
+}
+
+function getAnimationFrames(cache, appearance, g_ctx) {
+  const sheetName = appearance.sheet;
+  const animationName = appearance.animationName;
+  if (!sheetName || !animationName) {
+    return null;
+  }
+
+  let sheetEntry = cache.animationsBySheet.get(sheetName);
+  if (!sheetEntry) {
+    const registry = typeof g_ctx?.getResourceRegistry === 'function' ? g_ctx.getResourceRegistry() : null;
+    const sheetInfo = registry?.spritesheets?.find((item) => item.name === sheetName) || null;
+    const loadedSheet = sheetInfo?.sheet || null;
+    if (!loadedSheet || !loadedSheet.animations) {
+      cache.animationsBySheet.set(sheetName, null);
+      return null;
+    }
+    sheetEntry = loadedSheet.animations;
+    cache.animationsBySheet.set(sheetName, sheetEntry);
+  }
+
+  if (!sheetEntry || !sheetEntry[animationName]) {
+    return null;
+  }
+  return sheetEntry[animationName];
+}
+
+function buildFallbackBlocks(container, catalogItem, tileDim, selected) {
   const occupied = Array.isArray(catalogItem?.occupiedTiles) && catalogItem.occupiedTiles.length > 0
     ? catalogItem.occupiedTiles
     : [{ dx: 0, dy: 0 }];
@@ -70,6 +159,65 @@ function buildVisual(instance, catalogItem, tileDim, selected) {
     block.endFill();
     container.addChild(block);
   }
+}
+
+function appendSelectionOutline(container, tileDim, selected) {
+  if (!selected) {
+    return;
+  }
+  const bounds = container.getLocalBounds();
+  const outline = new PIXI.Graphics();
+  outline.lineStyle(2, 0xf1c40f, 1);
+  outline.drawRect(
+    bounds.x,
+    bounds.y,
+    Math.max(bounds.width, tileDim),
+    Math.max(bounds.height, tileDim),
+  );
+  outline.zIndex = 10;
+  container.addChild(outline);
+}
+
+function buildVisual(instance, catalogItem, tileDim, selected, state, g_ctx) {
+  const container = new PIXI.Container();
+  container.name = 'semantic_instance_' + instance.instanceId;
+  container.interactive = true;
+  container.eventMode = 'dynamic';
+  container.cursor = 'pointer';
+  container.x = instance.x;
+  container.y = instance.y;
+
+  const cache = ensureTextureCaches(state);
+  const appearance = normalizeAppearance(catalogItem);
+
+  let appearanceApplied = false;
+
+  if (appearance.renderType === 'static') {
+    const texture = getStaticTexture(cache, appearance, tileDim, catalogItem, g_ctx);
+    if (texture) {
+      const sprite = new PIXI.Sprite(texture);
+      sprite.anchor.set(appearance.anchorX, appearance.anchorY);
+      sprite.scale.set(appearance.previewScale, appearance.previewScale);
+      container.addChild(sprite);
+      appearanceApplied = true;
+    }
+  } else if (appearance.renderType === 'animated') {
+    const frames = getAnimationFrames(cache, appearance, g_ctx);
+    if (Array.isArray(frames) && frames.length > 0) {
+      const animatedSprite = new PIXI.AnimatedSprite(frames);
+      animatedSprite.anchor.set(appearance.anchorX, appearance.anchorY);
+      animatedSprite.scale.set(appearance.previewScale, appearance.previewScale);
+      animatedSprite.animationSpeed = 0.1;
+      animatedSprite.autoUpdate = true;
+      animatedSprite.play();
+      container.addChild(animatedSprite);
+      appearanceApplied = true;
+    }
+  }
+
+  if (!appearanceApplied) {
+    buildFallbackBlocks(container, catalogItem, tileDim, selected);
+  }
 
   const label = new PIXI.Text(catalogItem?.name || instance.catalogKey, {
     fontFamily: 'Courier',
@@ -82,6 +230,8 @@ function buildVisual(instance, catalogItem, tileDim, selected) {
   label.y = -16;
   label.zIndex = 1;
   container.addChild(label);
+
+  appendSelectionOutline(container, tileDim, selected);
 
   container.__instanceId = instance.instanceId;
   return container;
@@ -239,6 +389,11 @@ export function createSemanticPlacer(g_ctx, options = {}) {
       map: false,
     },
     keyboardDeleteWired: false,
+    textureCache: {
+      baseTextureByUrl: new Map(),
+      staticTextureByKey: new Map(),
+      animationsBySheet: new Map(),
+    },
   };
 
   const callbacks = {
@@ -353,7 +508,7 @@ export function createSemanticPlacer(g_ctx, options = {}) {
       const instance = state.objectInstances[i];
       const catalogItem = state.catalog.find((item) => item.key === instance.catalogKey);
       const selected = instance.instanceId === state.selectedInstanceId;
-      const visual = buildVisual(instance, catalogItem, tileDim, selected);
+      const visual = buildVisual(instance, catalogItem, tileDim, selected, state, g_ctx);
       attachDragHandlers(state, visual, g_ctx, callbacks);
       addContextDelete(visual, callbacks);
       overlay.addChild(visual);

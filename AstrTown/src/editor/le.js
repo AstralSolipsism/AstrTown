@@ -72,6 +72,463 @@ const EDITOR_MODE_LABEL = {
 };
 
 const LAYER_LABEL = ['背景层0', '背景层1', '物件层0', '物件层1'];
+const TILESET_ZOOM_LEVELS = [0.5, 0.75, 1, 1.25, 1.5];
+const SCENE_ANIM_DEFAULT_SPEED = 0.1;
+const SCENE_ANIM_DEFAULT_LOOP = true;
+const SCENE_ANIM_SELECTION_TINT = 0x7dff85;
+
+g_ctx.sceneAnimBrush = {
+    sheet: '',
+    animationName: '',
+    speed: SCENE_ANIM_DEFAULT_SPEED,
+    loop: SCENE_ANIM_DEFAULT_LOOP,
+};
+g_ctx.sceneAnimSelection = null;
+g_ctx.sceneAnimSelectionRef = null;
+
+function normalizeResourceUrl(input) {
+    if (typeof input !== 'string') {
+        return '';
+    }
+    return input.trim();
+}
+
+function getOrCreateResourceRegistry() {
+    if (!g_ctx.resourceRegistry) {
+        g_ctx.resourceRegistry = {
+            tilesets: [],
+            spritesheets: [],
+        };
+    }
+    return g_ctx.resourceRegistry;
+}
+
+function registerTilesetResource(url) {
+    const normalizedUrl = normalizeResourceUrl(url);
+    if (!normalizedUrl) {
+        return;
+    }
+    const registry = getOrCreateResourceRegistry();
+    const exists = registry.tilesets.some((item) => item.key === normalizedUrl);
+    if (!exists) {
+        registry.tilesets.push({
+            key: normalizedUrl,
+            label: normalizedUrl,
+        });
+    }
+
+    if (g_ctx.semantic && typeof g_ctx.semantic.refreshCatalog === 'function') {
+        g_ctx.semantic.refreshCatalog();
+    }
+}
+
+function registerSpritesheetResource(name, sheet) {
+    const normalizedName = normalizeResourceUrl(name);
+    if (!normalizedName || !sheet) {
+        return;
+    }
+
+    const registry = getOrCreateResourceRegistry();
+    const animations = Object.keys(sheet.animations || {});
+    const existing = registry.spritesheets.find((item) => item.name === normalizedName);
+    if (existing) {
+        existing.sheet = sheet;
+        existing.animations = animations;
+    } else {
+        registry.spritesheets.push({
+            name: normalizedName,
+            sheet,
+            animations,
+        });
+    }
+
+    if (g_ctx.semantic && typeof g_ctx.semantic.refreshCatalog === 'function') {
+        g_ctx.semantic.refreshCatalog();
+    }
+
+    if (!g_ctx.sceneAnimBrush || !g_ctx.sceneAnimBrush.sheet) {
+        setSceneAnimBrush({ sheet: normalizedName });
+    } else if (g_ctx.sceneAnimBrush.sheet === normalizedName) {
+        setSceneAnimBrush({ sheet: normalizedName, animationName: g_ctx.sceneAnimBrush.animationName });
+    } else if (typeof g_ctx.refreshSceneAnimationUI === 'function') {
+        g_ctx.refreshSceneAnimationUI();
+    }
+}
+
+function getSpritesheetRegistryEntryByName(name) {
+    const normalizedName = normalizeResourceUrl(name);
+    if (!normalizedName) {
+        return null;
+    }
+    const registry = getOrCreateResourceRegistry();
+    return registry.spritesheets.find((item) => item.name === normalizedName) || null;
+}
+
+function getSpritesheetByName(name) {
+    return getSpritesheetRegistryEntryByName(name)?.sheet || null;
+}
+
+function buildSceneAnimInstanceId(layer, x, y, sheet, animationName) {
+    const layerNum = Number.isFinite(Number(layer)) ? Number(layer) : -1;
+    const xx = Number.isFinite(Number(x)) ? Number(x) : -1;
+    const yy = Number.isFinite(Number(y)) ? Number(y) : -1;
+    const safeSheet = normalizeResourceUrl(sheet);
+    const safeAnimation = typeof animationName === 'string' ? animationName : '';
+    return `${layerNum}:${xx}:${yy}:${safeSheet}:${safeAnimation}`;
+}
+
+function sanitizeSceneAnimSpeed(value) {
+    const speedNum = Number(value);
+    if (!Number.isFinite(speedNum) || speedNum < 0) {
+        return SCENE_ANIM_DEFAULT_SPEED;
+    }
+    return speedNum;
+}
+
+function sanitizeSceneAnimLoop(value) {
+    if (typeof value === 'boolean') {
+        return value;
+    }
+    return SCENE_ANIM_DEFAULT_LOOP;
+}
+
+function createAnimatedSpriteFromFrames(frames, speed, loop) {
+    const sprite = new PIXI.AnimatedSprite(frames);
+    sprite.animationSpeed = sanitizeSceneAnimSpeed(speed);
+    sprite.loop = sanitizeSceneAnimLoop(loop);
+    sprite.autoUpdate = true;
+    sprite.play();
+    return sprite;
+}
+
+function applySceneAnimMetadata(sprite, meta) {
+    if (!sprite || !meta) {
+        return;
+    }
+    sprite.animationname = meta.animationName;
+    sprite.spritesheetname = meta.sheet;
+    sprite.sceneAnimSpeed = sanitizeSceneAnimSpeed(meta.speed);
+    sprite.sceneAnimLoop = sanitizeSceneAnimLoop(meta.loop);
+    sprite.sceneAnimInstanceId = meta.instanceId;
+    sprite.sceneAnimLayer = meta.layer;
+}
+
+function createSceneAnimatedSpritePair(frames, meta) {
+    const main = createAnimatedSpriteFromFrames(frames, meta.speed, meta.loop);
+    const composite = createAnimatedSpriteFromFrames(frames, meta.speed, meta.loop);
+    applySceneAnimMetadata(main, meta);
+    applySceneAnimMetadata(composite, meta);
+    return { main, composite };
+}
+
+function updateBrushPreviewAnimatedTile(sheet, animationName, speed, loop) {
+    if (!g_ctx.g_layers || !g_ctx.g_layers[0]) {
+        return;
+    }
+
+    const layer0 = g_ctx.g_layers[0];
+    const animations = sheet?.animations || {};
+    if (!animationName || !animations[animationName]) {
+        layer0.curanimatedtile = null;
+        return;
+    }
+
+    const as = createAnimatedSpriteFromFrames(animations[animationName], speed, loop);
+    as.alpha = .5;
+    as.animationname = animationName;
+    layer0.curanimatedtile = as;
+}
+
+function clearSceneAnimSelectionHighlight() {
+    const ref = g_ctx.sceneAnimSelectionRef;
+    if (!ref) {
+        return;
+    }
+
+    const spritesToReset = [ref.sprite, ref.compositeSprite];
+    for (const sprite of spritesToReset) {
+        if (!sprite) {
+            continue;
+        }
+        if (typeof sprite._sceneAnimPrevTint !== 'undefined') {
+            sprite.tint = sprite._sceneAnimPrevTint;
+            delete sprite._sceneAnimPrevTint;
+        } else {
+            sprite.tint = 0xFFFFFF;
+        }
+    }
+}
+
+function emitSceneAnimSelectionChanged() {
+    if (typeof g_ctx.onSceneAnimSelectionChange === 'function') {
+        g_ctx.onSceneAnimSelectionChange(g_ctx.sceneAnimSelection);
+    }
+    if (typeof g_ctx.refreshSceneAnimationUI === 'function') {
+        g_ctx.refreshSceneAnimationUI();
+    }
+}
+
+function clearSceneAnimSelection() {
+    clearSceneAnimSelectionHighlight();
+    g_ctx.sceneAnimSelection = null;
+    g_ctx.sceneAnimSelectionRef = null;
+    emitSceneAnimSelectionChanged();
+}
+
+function setSceneAnimBrush(nextPatch = {}) {
+    const currentBrush = g_ctx.sceneAnimBrush || {
+        sheet: '',
+        animationName: '',
+        speed: SCENE_ANIM_DEFAULT_SPEED,
+        loop: SCENE_ANIM_DEFAULT_LOOP,
+    };
+
+    const nextBrush = {
+        ...currentBrush,
+        ...(nextPatch || {}),
+    };
+
+    nextBrush.speed = sanitizeSceneAnimSpeed(nextBrush.speed);
+    nextBrush.loop = sanitizeSceneAnimLoop(nextBrush.loop);
+
+    if (!nextBrush.sheet) {
+        const registry = getOrCreateResourceRegistry();
+        if (registry.spritesheets.length > 0) {
+            nextBrush.sheet = registry.spritesheets[0].name;
+        }
+    }
+
+    const targetSheet = nextBrush.sheet ? getSpritesheetByName(nextBrush.sheet) : null;
+    const animations = targetSheet?.animations || {};
+
+    if (!nextBrush.animationName || !animations[nextBrush.animationName]) {
+        nextBrush.animationName = Object.keys(animations)[0] || '';
+    }
+
+    if (targetSheet && nextBrush.animationName && animations[nextBrush.animationName]) {
+        g_ctx.spritesheet = targetSheet;
+        g_ctx.spritesheetname = nextBrush.sheet;
+        updateBrushPreviewAnimatedTile(targetSheet, nextBrush.animationName, nextBrush.speed, nextBrush.loop);
+    } else {
+        if (Object.prototype.hasOwnProperty.call(nextPatch || {}, 'sheet')) {
+            g_ctx.spritesheet = null;
+            g_ctx.spritesheetname = null;
+        }
+        updateBrushPreviewAnimatedTile(null, '', nextBrush.speed, nextBrush.loop);
+    }
+
+    g_ctx.sceneAnimBrush = nextBrush;
+
+    if (typeof g_ctx.refreshSceneAnimationUI === 'function') {
+        g_ctx.refreshSceneAnimationUI();
+    }
+
+    return nextBrush;
+}
+
+function selectSceneAnimInstance(layer, worldX, worldY) {
+    clearSceneAnimSelectionHighlight();
+
+    if (!layer || !Number.isFinite(Number(worldX)) || !Number.isFinite(Number(worldY))) {
+        g_ctx.sceneAnimSelection = null;
+        g_ctx.sceneAnimSelectionRef = null;
+        emitSceneAnimSelectionChanged();
+        return null;
+    }
+
+    const tileIndex = level_index_from_px(worldX, worldY);
+    const sprite = layer.sprites?.[tileIndex] || null;
+    const compositeSprite = layer.composite_sprites?.[tileIndex] || null;
+
+    if (!sprite || !sprite.hasOwnProperty('animationSpeed')) {
+        g_ctx.sceneAnimSelection = null;
+        g_ctx.sceneAnimSelectionRef = null;
+        emitSceneAnimSelectionChanged();
+        return null;
+    }
+
+    const sheetName = sprite.spritesheetname || '';
+    const animationName = sprite.animationname || '';
+    const instanceId = sprite.sceneAnimInstanceId
+        || buildSceneAnimInstanceId(layer.num, sprite.x, sprite.y, sheetName, animationName);
+
+    const spritesToTint = [sprite, compositeSprite];
+    for (const target of spritesToTint) {
+        if (!target) {
+            continue;
+        }
+        target._sceneAnimPrevTint = target.tint;
+        target.tint = SCENE_ANIM_SELECTION_TINT;
+    }
+
+    g_ctx.sceneAnimSelection = {
+        instanceId,
+        layer: layer.num,
+        x: sprite.x,
+        y: sprite.y,
+        sheet: sheetName,
+        animationName,
+        speed: sanitizeSceneAnimSpeed(sprite.sceneAnimSpeed ?? sprite.animationSpeed),
+        loop: sanitizeSceneAnimLoop(sprite.sceneAnimLoop ?? sprite.loop),
+    };
+
+    g_ctx.sceneAnimSelectionRef = {
+        layer,
+        tileIndex,
+        sprite,
+        compositeSprite,
+    };
+
+    emitSceneAnimSelectionChanged();
+    return g_ctx.sceneAnimSelection;
+}
+
+function applySceneAnimSelectionToInstance(patch = {}) {
+    const ref = g_ctx.sceneAnimSelectionRef;
+    if (!ref || !ref.sprite) {
+        return false;
+    }
+
+    const nextSpeed = sanitizeSceneAnimSpeed(patch.speed);
+    const nextLoop = sanitizeSceneAnimLoop(patch.loop);
+
+    const targets = [ref.sprite, ref.compositeSprite];
+    for (const target of targets) {
+        if (!target) {
+            continue;
+        }
+        target.animationSpeed = nextSpeed;
+        target.loop = nextLoop;
+        target.sceneAnimSpeed = nextSpeed;
+        target.sceneAnimLoop = nextLoop;
+        target.play();
+    }
+
+    if (g_ctx.sceneAnimSelection) {
+        g_ctx.sceneAnimSelection = {
+            ...g_ctx.sceneAnimSelection,
+            speed: nextSpeed,
+            loop: nextLoop,
+        };
+    }
+
+    emitSceneAnimSelectionChanged();
+    return true;
+}
+
+function attachResourceRegistryAPI() {
+    g_ctx.getResourceRegistry = () => {
+        const registry = getOrCreateResourceRegistry();
+        return {
+            tilesets: registry.tilesets.map((item) => ({ ...item })),
+            spritesheets: registry.spritesheets.map((item) => ({
+                name: item.name,
+                animations: Array.isArray(item.animations) ? item.animations.slice() : [],
+                sheet: item.sheet,
+            })),
+        };
+    };
+}
+
+function getTilesetCanvas() {
+    const canvas = document.getElementById('tileset');
+    return canvas || null;
+}
+
+function applyTilesetRenderStyle(canvas) {
+    if (!canvas) {
+        return;
+    }
+
+    canvas.style.imageRendering = 'pixelated';
+    canvas.style.setProperty('image-rendering', 'crisp-edges');
+    canvas.style.setProperty('-ms-interpolation-mode', 'nearest-neighbor');
+    canvas.style.transformOrigin = 'top left';
+}
+
+function syncTilesetZoomButtonState(level) {
+    const zoomButtons = document.querySelectorAll('#tileset-toolbar .tileset-zoom-btn[data-zoom]');
+    zoomButtons.forEach((button) => {
+        const z = button.dataset.zoom;
+        const active = z !== 'reset' && Number(z) === level;
+        button.classList.toggle('is-active', active);
+    });
+}
+
+function setTilesetZoom(level, options = {}) {
+    const canvas = getTilesetCanvas();
+    if (!canvas) {
+        return;
+    }
+
+    const requested = Number(level);
+    const fallback = Number(CONFIG.tilesetZoom) || 1;
+    const rawLevel = Number.isFinite(requested) && requested > 0 ? requested : fallback;
+    const safeLevel = TILESET_ZOOM_LEVELS.includes(rawLevel) ? rawLevel : fallback;
+
+    if (!Number.isFinite(g_ctx.tilesetBaseWidth) || g_ctx.tilesetBaseWidth <= 0) {
+        g_ctx.tilesetBaseWidth = g_ctx.tilesetpxw || canvas.width || 0;
+    }
+    if (!Number.isFinite(g_ctx.tilesetBaseHeight) || g_ctx.tilesetBaseHeight <= 0) {
+        g_ctx.tilesetBaseHeight = g_ctx.tilesetpxh || canvas.height || 0;
+    }
+
+    const baseWidth = g_ctx.tilesetBaseWidth || canvas.width;
+    const baseHeight = g_ctx.tilesetBaseHeight || canvas.height;
+
+    canvas.style.width = `${Math.round(baseWidth * safeLevel)}px`;
+    canvas.style.height = `${Math.round(baseHeight * safeLevel)}px`;
+
+    applyTilesetRenderStyle(canvas);
+
+    g_ctx.tilesetZoom = safeLevel;
+    if (options.persistConfig !== false) {
+        g_ctx.tilesetZoomConfig = safeLevel;
+    }
+
+    syncTilesetZoomButtonState(safeLevel);
+}
+
+function bindTilesetToolbar() {
+    if (g_ctx._tilesetToolbarBound) {
+        return;
+    }
+
+    const zoomButtons = document.querySelectorAll('#tileset-toolbar .tileset-zoom-btn[data-zoom]');
+    zoomButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            const zoomRaw = button.dataset.zoom;
+            if (zoomRaw === 'reset') {
+                setTilesetZoom(CONFIG.tilesetZoom);
+                return;
+            }
+
+            const zoomLevel = Number(zoomRaw);
+            if (!Number.isFinite(zoomLevel) || !TILESET_ZOOM_LEVELS.includes(zoomLevel)) {
+                return;
+            }
+            setTilesetZoom(zoomLevel);
+        });
+    });
+
+    g_ctx._tilesetToolbarBound = true;
+}
+
+function refreshTilesetCanvasMetrics() {
+    const canvas = getTilesetCanvas();
+    if (!canvas) {
+        return;
+    }
+
+    g_ctx.tilesetBaseWidth = g_ctx.tilesetpxw || canvas.width;
+    g_ctx.tilesetBaseHeight = g_ctx.tilesetpxh || canvas.height;
+    applyTilesetRenderStyle(canvas);
+
+    const preferredZoom = Number.isFinite(g_ctx.tilesetZoom)
+        ? g_ctx.tilesetZoom
+        : (Number(CONFIG.tilesetZoom) || 1);
+    setTilesetZoom(preferredZoom, { persistConfig: false });
+}
 
 function tileset_index_from_coords(x, y) {
     let retme = x + (y*g_ctx.tilesettilew);
@@ -240,12 +697,14 @@ class LayerContext {
     }
 
     // add tile of tileset "index" to Level at location x,y
-    addTileLevelPx(x, y, index, animationName = null) {
+    // 兼容旧签名 addTileLevelPx(x, y, index, animationName)
+    // 新签名支持 addTileLevelPx(x, y, index, { sheet, animationName, speed, loop })
+    addTileLevelPx(x, y, index, animationConfig = null) {
 
         if (x > CONFIG.levelwidth || y > CONFIG.levelheight){
             console.log("tile placed outside of level boundary, ignoring",x,y)
             return -1;
-        } 
+        }
 
         let xPx = x;
         let yPx = y;
@@ -253,29 +712,67 @@ class LayerContext {
         let ctile = null;
         let ctile2 = null;
 
-        if(g_ctx.spritesheet != null){
-            const animations = g_ctx.spritesheet.animations || {};
-            // 优先使用调用方显式指定的动画名，不存在则回退到第一个可用动画
-            const resolvedAnimationName = (animationName && animations[animationName])
-                ? animationName
+        const normalizedConfig = (() => {
+            if (typeof animationConfig === 'string') {
+                return { animationName: animationConfig };
+            }
+            if (animationConfig && typeof animationConfig === 'object') {
+                return { ...animationConfig };
+            }
+            return null;
+        })();
+
+        let targetSheet = g_ctx.spritesheet;
+        let targetSheetName = g_ctx.spritesheetname || '';
+
+        if (normalizedConfig?.sheet) {
+            const customSheet = getSpritesheetByName(normalizedConfig.sheet);
+            if (customSheet) {
+                targetSheet = customSheet;
+                targetSheetName = normalizedConfig.sheet;
+            }
+        }
+
+        if(targetSheet != null){
+            const animations = targetSheet.animations || {};
+            const resolvedAnimationName = (normalizedConfig?.animationName && animations[normalizedConfig.animationName])
+                ? normalizedConfig.animationName
                 : Object.keys(animations)[0];
             if (!resolvedAnimationName || !animations[resolvedAnimationName]) {
-                console.warn("addTileLevelPx: spritesheet 没有可用动画，跳过放置", g_ctx.spritesheetname);
+                console.warn("addTileLevelPx: spritesheet 没有可用动画，跳过放置", targetSheetName);
                 return -1;
             }
 
-            ctile  =  new PIXI.AnimatedSprite(animations[resolvedAnimationName]);
-            ctile2 =  new PIXI.AnimatedSprite(animations[resolvedAnimationName]);
-            ctile.animationSpeed = .1;
-            ctile2.animationSpeed = .1;
-            ctile.autoUpdate = true;
-            ctile2.autoUpdate = true;
-            ctile.play();
-            ctile2.play();
+            const resolvedSpeed = sanitizeSceneAnimSpeed(
+                normalizedConfig?.speed ?? g_ctx.sceneAnimBrush?.speed ?? SCENE_ANIM_DEFAULT_SPEED
+            );
+            const resolvedLoop = sanitizeSceneAnimLoop(
+                normalizedConfig?.loop ?? g_ctx.sceneAnimBrush?.loop ?? SCENE_ANIM_DEFAULT_LOOP
+            );
 
-            // HACK for now just stuff animated sprite details into the sprite
-            ctile.animationname   = resolvedAnimationName;
-            ctile.spritesheetname = g_ctx.spritesheetname; 
+            const snappedX = Math.floor(xPx / g_ctx.tiledimx) * g_ctx.tiledimx;
+            const snappedY = Math.floor(yPx / g_ctx.tiledimy) * g_ctx.tiledimy;
+            const instanceId = buildSceneAnimInstanceId(
+                this.num,
+                snappedX,
+                snappedY,
+                targetSheetName,
+                resolvedAnimationName,
+            );
+
+            const animatedPair = createSceneAnimatedSpritePair(
+                animations[resolvedAnimationName],
+                {
+                    animationName: resolvedAnimationName,
+                    sheet: targetSheetName,
+                    speed: resolvedSpeed,
+                    loop: resolvedLoop,
+                    instanceId,
+                    layer: this.num,
+                },
+            );
+            ctile = animatedPair.main;
+            ctile2 = animatedPair.composite;
 
         } else {
             let pxloc = tileset_px_from_index(index);
@@ -287,13 +784,11 @@ class LayerContext {
         // snap to grid
         const dx = g_ctx.tiledimx;
         const dy = g_ctx.tiledimy;
-        ctile.x  = Math.floor(xPx / dx) * dx; 
-        ctile2.x = Math.floor(xPx / dx) * dx; 
+        ctile.x  = Math.floor(xPx / dx) * dx;
+        ctile2.x = Math.floor(xPx / dx) * dx;
         ctile.y  = Math.floor(yPx / dy) * dy;
         ctile2.y = Math.floor(yPx / dy) * dy;
-        ctile2.zIndex = this.num; 
-
-        // console.log(xPx,yPx,ctile.x,ctile.y);
+        ctile2.zIndex = this.num;
 
         let new_index = level_index_from_px(ctile.x, ctile.y);
 
@@ -304,12 +799,16 @@ class LayerContext {
         if (!g_ctx.dkey) {
             this.container.addChild(ctile);
             g_ctx.composite.container.addChild(ctile2);
-        } 
+        }
 
 
         if (this.sprites.hasOwnProperty(new_index)) {
             if(g_ctx.debug_flag){
              console.log("addTileLevelPx: ",this.num,"removing old tile", new_index);
+            }
+            const removedSprite = this.sprites[new_index];
+            if (g_ctx.sceneAnimSelectionRef && g_ctx.sceneAnimSelectionRef.sprite === removedSprite) {
+                clearSceneAnimSelection();
             }
             this.container.removeChild(this.sprites[new_index]);
             delete this.sprites[new_index];
@@ -326,7 +825,6 @@ class LayerContext {
             this.drawFilter();
         }
 
-        // consolelog("SETTING ZINDEX ", this.composite_sprites[new_index].zIndex);
         return new_index;
     }
 
@@ -386,27 +884,15 @@ class TilesetContext {
     addTileSheet(name, sheet){
         console.log(" tileset.addTileSheet ", sheet);
 
-
-        // FIXME ... development code
         g_ctx.spritesheet = sheet;
         g_ctx.spritesheetname = name;
+        registerSpritesheetResource(name, sheet);
 
-        const animations = sheet.animations || {};
-        // 选择 spritesheet 中第一个可用动画作为默认预览
-        const resolvedAnimationName = Object.keys(animations)[0];
-        if (!resolvedAnimationName || !animations[resolvedAnimationName]) {
+        const nextBrush = setSceneAnimBrush({ sheet: name });
+        if (!nextBrush.animationName) {
             console.warn("addTileSheet: spritesheet 没有可用动画，跳过预览", name);
             g_ctx.g_layers[0].curanimatedtile = null;
-            return;
         }
-
-        let as =  new PIXI.AnimatedSprite(animations[resolvedAnimationName]);
-        as.animationSpeed = .1;
-        as.autoUpdate = true;
-        as.play();
-        as.alpha = .5;
-        as.animationname = resolvedAnimationName;
-        g_ctx.g_layers[0].curanimatedtile = as;
     }
 } // class TilesetContext
 
@@ -454,6 +940,10 @@ function loadAnimatedSpritesFromModule(mod){
         return;
     }
 
+    const metaMap = mod?.animatedspritesMeta && typeof mod.animatedspritesMeta === 'object'
+        ? mod.animatedspritesMeta
+        : {};
+
     let m = new Map();
 
     for(let x = 0; x < mod.animatedsprites.length; x++){
@@ -476,8 +966,22 @@ function loadAnimatedSpritesFromModule(mod){
                 let asprarray = m.get(key);
                 for (let asprite of asprarray) {
                     console.log("Loading animation", asprite.animation);
-                    g_ctx.g_layers[asprite.layer].addTileLevelPx(asprite.x, asprite.y, -1, asprite.animation);
+                    const metaKey = buildSceneAnimInstanceId(
+                        asprite.layer,
+                        asprite.x,
+                        asprite.y,
+                        asprite.sheet,
+                        asprite.animation,
+                    );
+                    const meta = metaMap[metaKey] || {};
+                    g_ctx.g_layers[asprite.layer].addTileLevelPx(asprite.x, asprite.y, -1, {
+                        sheet: asprite.sheet,
+                        animationName: asprite.animation,
+                        speed: sanitizeSceneAnimSpeed(meta.speed ?? SCENE_ANIM_DEFAULT_SPEED),
+                        loop: sanitizeSceneAnimLoop(meta.loop ?? SCENE_ANIM_DEFAULT_LOOP),
+                    });
                 }
+                registerSpritesheetResource(key, sheet);
                 g_ctx.spritesheet     = null;
                 g_ctx.spritesheetname = null;
             }
@@ -495,6 +999,7 @@ function loadMapFromModuleFinish(mod) {
 
     g_ctx.tileset_app.stage.removeChildren()
     g_ctx.tileset = new TilesetContext(g_ctx.tileset_app, mod);
+    refreshTilesetCanvasMetrics();
     g_ctx.g_layer_apps[0].stage.removeChildren()
     g_ctx.g_layers[0] = new LayerContext(g_ctx.g_layer_apps[0], document.getElementById("layer0pane"), 0, mod);
     g_ctx.g_layer_apps[1].stage.removeChildren()
@@ -513,6 +1018,7 @@ function loadMapFromModuleFinish(mod) {
 
 function loadMapFromModule(mod) {
     g_ctx.tilesetpath = mod.tilesetpath;
+    registerTilesetResource(g_ctx.tilesetpath);
     initTilesSync(loadMapFromModuleFinish.bind(null, mod));
     initTiles();
 }
@@ -784,37 +1290,23 @@ window.addEventListener(
                 if (g_ctx.debug_flag) {
                     console.log("Undo removing ", undome[i])
                 }
-                // Remove current tile
-                layer.container.removeChild(layer.sprites[undome[i][0]]);
-                g_ctx.composite.container.removeChild(layer.composite_sprites[undome[i][0]]);
-                
-                // Restore original tile if it existed
-                if (undome[i][1] != null && undome[i][1] !== -1) {
-                    let pxloc = tileset_px_from_index(undome[i][1]);
-                    let originalTile = sprite_from_px(pxloc[0] + g_ctx.tileset.fudgex, pxloc[1] + g_ctx.tileset.fudgey);
-                    let originalTile2 = sprite_from_px(pxloc[0] + g_ctx.tileset.fudgex, pxloc[1] + g_ctx.tileset.fudgey);
-                    
-                    // Position tiles at the correct location
-                    let x = Math.floor(undome[i][0] % CONFIG.leveltilewidth) * g_ctx.tiledimx;
-                    let y = Math.floor(undome[i][0] / CONFIG.leveltilewidth) * g_ctx.tiledimx;
-                    originalTile.x = x;
-                    originalTile.y = y;
-                    originalTile2.x = x;
-                    originalTile2.y = y;
-                    originalTile2.zIndex = layer.num;
-                    
-                    // Add tiles back to containers
-                    layer.container.addChild(originalTile);
-                    g_ctx.composite.container.addChild(originalTile2);
-                    
-                    // Update sprite references
-                    layer.sprites[undome[i][0]] = originalTile;
-                    layer.composite_sprites[undome[i][0]] = originalTile2;
-                } else {
-                    // If there was no original tile, delete the sprite references
-                    delete layer.sprites[undome[i][0]];
-                    delete layer.composite_sprites[undome[i][0]];
+
+                const levelIndex = undome[i][0];
+                const currentSprite = layer.sprites[levelIndex];
+                const currentComposite = layer.composite_sprites[levelIndex];
+
+                if (g_ctx.sceneAnimSelectionRef && g_ctx.sceneAnimSelectionRef.sprite === currentSprite) {
+                    clearSceneAnimSelection();
                 }
+
+                if (currentSprite) {
+                    layer.container.removeChild(currentSprite);
+                }
+                if (currentComposite) {
+                    g_ctx.composite.container.removeChild(currentComposite);
+                }
+
+                restoreOldTileValue(layer, levelIndex, undome[i][1]);
             }
         }
         else if (event.shiftKey && event.code == 'ArrowUp') {
@@ -1007,7 +1499,75 @@ function centerCompositePane(x, y){
 
 function getOldTileValue(layer, x, y) {
     let levelIndex = level_index_from_px(x, y);
-    return layer.sprites[levelIndex] ? layer.sprites[levelIndex].index : -1;
+    const existing = layer.sprites[levelIndex] || null;
+    if (!existing) {
+        return -1;
+    }
+
+    if (existing.hasOwnProperty('animationSpeed')) {
+        return {
+            isAnimated: true,
+            layer: layer.num,
+            x: existing.x,
+            y: existing.y,
+            sheet: existing.spritesheetname,
+            animationName: existing.animationname,
+            speed: sanitizeSceneAnimSpeed(existing.sceneAnimSpeed ?? existing.animationSpeed),
+            loop: sanitizeSceneAnimLoop(existing.sceneAnimLoop ?? existing.loop),
+        };
+    }
+
+    return existing.index;
+}
+
+function restoreOldTileValue(layer, levelIndex, oldValue) {
+    if (oldValue == null || oldValue === -1) {
+        delete layer.sprites[levelIndex];
+        delete layer.composite_sprites[levelIndex];
+        return;
+    }
+
+    let x = Math.floor(levelIndex % CONFIG.leveltilewidth) * g_ctx.tiledimx;
+    let y = Math.floor(levelIndex / CONFIG.leveltilewidth) * g_ctx.tiledimx;
+
+    if (typeof oldValue === 'object' && oldValue.isAnimated) {
+        const targetSheet = getSpritesheetByName(oldValue.sheet) || g_ctx.spritesheet;
+        if (!targetSheet) {
+            console.warn('restoreOldTileValue: 找不到旧动画资源', oldValue.sheet);
+            return;
+        }
+
+        const prevSheet = g_ctx.spritesheet;
+        const prevSheetName = g_ctx.spritesheetname;
+        g_ctx.spritesheet = targetSheet;
+        g_ctx.spritesheetname = oldValue.sheet;
+        layer.addTileLevelPx(x, y, -1, {
+            sheet: oldValue.sheet,
+            animationName: oldValue.animationName,
+            speed: oldValue.speed,
+            loop: oldValue.loop,
+        });
+        g_ctx.spritesheet = prevSheet;
+        g_ctx.spritesheetname = prevSheetName;
+        return;
+    }
+
+    let pxloc = tileset_px_from_index(oldValue);
+    let originalTile = sprite_from_px(pxloc[0] + g_ctx.tileset.fudgex, pxloc[1] + g_ctx.tileset.fudgey);
+    let originalTile2 = sprite_from_px(pxloc[0] + g_ctx.tileset.fudgex, pxloc[1] + g_ctx.tileset.fudgey);
+
+    originalTile.x = x;
+    originalTile.y = y;
+    originalTile2.x = x;
+    originalTile2.y = y;
+    originalTile2.zIndex = layer.num;
+    originalTile.index = oldValue;
+
+    layer.container.addChild(originalTile);
+    g_ctx.composite.container.addChild(originalTile2);
+
+    layer.sprites[levelIndex] = originalTile;
+    layer.composite_sprites[levelIndex] = originalTile2;
 }
 
 function centerLayerPanes(x, y){
@@ -1188,6 +1748,13 @@ function onCompositePointerDown(compositeCtx, e) {
         return;
     }
 
+    const selectedAnim = selectSceneAnimInstance(layer, e.data.global.x, e.data.global.y);
+    if (selectedAnim) {
+        g_ctx.compositeDragLayer = null;
+        g_ctx.compositeDragging = false;
+        return;
+    }
+
     g_ctx.compositeDragLayer = layer;
     g_ctx.compositeDragging = true;
     onLevelPointerDown(layer, e);
@@ -1230,9 +1797,27 @@ function levelPlaceNoVariable(layer, e) {
 
     centerCompositePane(xorig, yorig);
 
+    const isSceneAnimBrushActive = !!(
+        g_ctx.sceneAnimBrush?.sheet
+        && g_ctx.sceneAnimBrush?.animationName
+        && g_ctx.spritesheet
+    );
+
     if (g_ctx.dkey || g_ctx.selected_tiles.length == 0) {
         let oldValue = getOldTileValue(layer, e.data.global.x, e.data.global.y);
-        let ti = layer.addTileLevelPx(e.data.global.x, e.data.global.y, g_ctx.tile_index);
+        let ti = layer.addTileLevelPx(
+            e.data.global.x,
+            e.data.global.y,
+            g_ctx.tile_index,
+            isSceneAnimBrushActive
+                ? {
+                    sheet: g_ctx.sceneAnimBrush.sheet,
+                    animationName: g_ctx.sceneAnimBrush.animationName,
+                    speed: g_ctx.sceneAnimBrush.speed,
+                    loop: g_ctx.sceneAnimBrush.loop,
+                }
+                : null,
+        );
         UNDO.undo_add_single_index_as_task(layer, ti, oldValue);
     } else {
         UNDO.undo_mark_task_start(layer);
@@ -1241,7 +1826,7 @@ function levelPlaceNoVariable(layer, e) {
             let x = xorig + index[0] * g_ctx.tiledimx;
             let y = yorig + index[1] * g_ctx.tiledimx;
             let oldValue = getOldTileValue(layer, x, y);
-            
+
             let ti = layer.addTileLevelPx(x, y, index[2]);
             UNDO.undo_add_index_to_task(ti, oldValue);
         }
@@ -1507,6 +2092,7 @@ function initPixiApps() {
     // // Install the EventSystem
     // renderer.addSystem(EventSystem, 'tileevents');
     g_ctx.tileset = new TilesetContext(g_ctx.tileset_app);
+    refreshTilesetCanvasMetrics();
 }
 
 function setGridSize(size) {
@@ -1593,6 +2179,7 @@ function initTilesSync(callme) {
 const initTilesConfig = async () => {
 
     g_ctx.tilesetpath = CONFIG.DEFAULTTILESETPATH;
+    registerTilesetResource(g_ctx.tilesetpath);
 
     return new Promise((resolve, reject) => {
         
@@ -1657,6 +2244,9 @@ function initTiles() {
 async function init() {
 
     UI.initMainHTMLWindow();
+    attachResourceRegistryAPI();
+
+    bindTilesetToolbar();
 
     // We need to load the Tileset to know how to size things. So we block until done.
     await initTilesConfig();
@@ -1683,12 +2273,24 @@ async function init() {
         }
     });
 
+    g_ctx.setSceneAnimBrush = setSceneAnimBrush;
+    g_ctx.selectSceneAnimInstance = selectSceneAnimInstance;
+    g_ctx.applySceneAnimSelectionToInstance = applySceneAnimSelectionToInstance;
+
     UI.initLevelLoader(loadMapFromModule);
     UI.initCompositePNGLoader();
-    UI.initSpriteSheetLoader();
-    UI.initTilesetLoader( loadMapFromModule.bind(null, g_ctx));
+    UI.initSpriteSheetLoader(registerSpritesheetResource);
+    UI.bindSceneAnimationUI({
+        getResourceRegistry: g_ctx.getResourceRegistry,
+        getBrush: () => g_ctx.sceneAnimBrush,
+        setBrush: setSceneAnimBrush,
+        getSelection: () => g_ctx.sceneAnimSelection,
+        applySelection: applySceneAnimSelectionToInstance,
+    });
+    UI.initTilesetLoader(loadMapFromModule.bind(null, g_ctx), registerTilesetResource);
 
     bindWorkspaceUI();
+    setSceneAnimBrush({});
 }
 
 init();

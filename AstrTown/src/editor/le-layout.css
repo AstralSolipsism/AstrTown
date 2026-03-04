@@ -222,14 +222,48 @@ textarea {
   background: rgba(59, 130, 246, 0.2);
 }
 
-#tilesetpane,
 #tileset-container {
   width: 100%;
-  max-height: 340px;
-  overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: #0f172a;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#tileset-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.85);
+}
+
+.tileset-zoom-btn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #111827;
+  color: var(--text);
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tileset-zoom-btn:hover {
+  border-color: var(--focus);
+}
+
+.tileset-zoom-btn.is-active {
+  border-color: var(--focus);
+  background: rgba(59, 130, 246, 0.2);
+}
+
+#tilesetpane {
+  width: 100%;
+  max-height: 340px;
+  overflow: auto;
 }
 
 #tileset {
@@ -375,5 +409,14 @@ textarea {
 #semantic-zone-primary {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+#semantic-appearance-canvas {
+  width: 128px;
+  height: 128px;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0f172a;
 }
 

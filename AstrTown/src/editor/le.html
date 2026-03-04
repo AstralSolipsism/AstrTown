@@ -95,6 +95,14 @@
         <div class="panel-section">
           <h3 class="panel-title">瓦片选择</h3>
           <div id="tileset-container">
+            <div id="tileset-toolbar" role="group" aria-label="瓦片缩放">
+              <button class="tileset-zoom-btn" type="button" data-zoom="0.5">50%</button>
+              <button class="tileset-zoom-btn" type="button" data-zoom="0.75">75%</button>
+              <button class="tileset-zoom-btn is-active" type="button" data-zoom="1">100%</button>
+              <button class="tileset-zoom-btn" type="button" data-zoom="1.25">125%</button>
+              <button class="tileset-zoom-btn" type="button" data-zoom="1.5">150%</button>
+              <button id="tileset-zoom-reset" class="tileset-zoom-btn" type="button" data-zoom="reset">重置</button>
+            </div>
             <div id="tilesetpane">
               <canvas id="tileset" width="5632" height="8672"></canvas>
             </div>
@@ -180,6 +188,68 @@
                   阻挡移动
                 </label>
               </div>
+
+              <div class="semantic-field semantic-field--full">
+                <h4 class="panel-title">外观配置</h4>
+              </div>
+
+              <div class="semantic-field">
+                <label for="semantic-appearance-render-type">渲染类型</label>
+                <select id="semantic-appearance-render-type" name="appearanceRenderType">
+                  <option value="none">none（仅占地）</option>
+                  <option value="static">static（静态贴图）</option>
+                  <option value="animated">animated（动画）</option>
+                </select>
+              </div>
+
+              <div class="semantic-field" id="semantic-appearance-source-wrap">
+                <label for="semantic-appearance-source-type">资源来源</label>
+                <select id="semantic-appearance-source-type" name="appearanceSourceType">
+                  <option value="tileset">tileset</option>
+                  <option value="spritesheet">spritesheet</option>
+                </select>
+              </div>
+
+              <div class="semantic-field" id="semantic-appearance-sheet-wrap">
+                <label for="semantic-appearance-sheet">贴图/动画资源</label>
+                <select id="semantic-appearance-sheet" name="appearanceSheet"></select>
+              </div>
+
+              <div class="semantic-field" id="semantic-appearance-animation-wrap">
+                <label for="semantic-appearance-animation">动画名称</label>
+                <select id="semantic-appearance-animation" name="appearanceAnimationName"></select>
+              </div>
+
+              <div class="semantic-field" id="semantic-appearance-anchor-x-wrap">
+                <label for="semantic-appearance-anchor-x">锚点 X</label>
+                <input id="semantic-appearance-anchor-x" name="appearanceAnchorX" type="number" step="0.01" value="0" />
+              </div>
+
+              <div class="semantic-field" id="semantic-appearance-anchor-y-wrap">
+                <label for="semantic-appearance-anchor-y">锚点 Y</label>
+                <input id="semantic-appearance-anchor-y" name="appearanceAnchorY" type="number" step="0.01" value="0" />
+              </div>
+
+              <div class="semantic-field" id="semantic-appearance-preview-scale-wrap">
+                <label for="semantic-appearance-preview-scale">预览缩放</label>
+                <input id="semantic-appearance-preview-scale" name="appearancePreviewScale" type="number" step="0.1" min="0.1" value="1" />
+              </div>
+
+              <div class="semantic-field semantic-field--full" id="semantic-appearance-frame-wrap">
+                <label>静态帧（x,y,width,height）</label>
+                <div class="semantic-frame-grid">
+                  <input id="semantic-appearance-frame-x" name="appearanceFrameX" type="number" step="1" value="0" />
+                  <input id="semantic-appearance-frame-y" name="appearanceFrameY" type="number" step="1" value="0" />
+                  <input id="semantic-appearance-frame-width" name="appearanceFrameWidth" type="number" step="1" value="32" />
+                  <input id="semantic-appearance-frame-height" name="appearanceFrameHeight" type="number" step="1" value="32" />
+                </div>
+              </div>
+
+              <div class="semantic-field semantic-field--full" id="semantic-appearance-preview-wrap">
+                <label for="semantic-appearance-canvas">外观预览</label>
+                <canvas id="semantic-appearance-canvas" width="128" height="128"></canvas>
+              </div>
+
               <div class="btn-row">
                 <button id="semantic-save-object" class="semantic-btn" type="submit">保存物体</button>
                 <button id="semantic-reset-form" class="semantic-btn" type="button">重置表单</button>
@@ -245,7 +315,64 @@
         <div class="panel-section">
           <h3 class="panel-title">精灵动画</h3>
           <button type="button" onclick="document.getElementById('spritesheet').click()">加载 Spritesheet</button>
-          <input id="spritesheet" type="file" multiple hidden accept=".png" />
+          <input id="spritesheet" type="file" multiple hidden accept=".json" />
+        </div>
+
+        <div class="panel-section" id="scene-animation-configurator">
+          <h3 class="panel-title">场景动画配置器</h3>
+
+          <div class="semantic-field semantic-field--full">
+            <label for="scene-anim-sheet-select">资源区：Spritesheet</label>
+            <select id="scene-anim-sheet-select">
+              <option value="">暂无已加载 Spritesheet</option>
+            </select>
+          </div>
+
+          <div class="semantic-field semantic-field--full">
+            <label for="scene-anim-list">动画列表区</label>
+            <ul id="scene-anim-list" class="semantic-list"></ul>
+          </div>
+
+          <div class="semantic-field semantic-field--full">
+            <label for="scene-anim-preview-canvas">预览与画笔参数</label>
+            <canvas id="scene-anim-preview-canvas" width="96" height="96"></canvas>
+            <div class="semantic-form-grid">
+              <div class="semantic-field">
+                <label for="scene-anim-brush-speed">speed</label>
+                <input id="scene-anim-brush-speed" type="number" min="0" step="0.01" value="0.1" />
+              </div>
+              <div class="semantic-field semantic-field-checkbox">
+                <label for="scene-anim-brush-loop">
+                  <input id="scene-anim-brush-loop" type="checkbox" checked />
+                  loop
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="semantic-field semantic-field--full">
+            <label for="scene-anim-instance-speed">实例属性区</label>
+            <div id="scene-anim-instance-info">当前未选中场景动画实例</div>
+            <div class="semantic-form-grid">
+              <div class="semantic-field">
+                <label for="scene-anim-instance-speed">speed</label>
+                <input id="scene-anim-instance-speed" type="number" min="0" step="0.01" value="0.1" />
+              </div>
+              <div class="semantic-field semantic-field-checkbox">
+                <label for="scene-anim-instance-loop">
+                  <input id="scene-anim-instance-loop" type="checkbox" checked />
+                  loop
+                </label>
+              </div>
+            </div>
+            <button id="scene-anim-apply-instance" type="button">应用到实例</button>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h3 class="panel-title">资源加载状态</h3>
+          <div id="semantic-resource-status">尚未加载额外资源</div>
+          <ul id="semantic-resource-list" class="semantic-list"></ul>
         </div>
 
         <div class="panel-section">

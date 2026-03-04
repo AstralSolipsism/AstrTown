@@ -32,6 +32,8 @@ export const htmlTilesetPaneH = 600;
 export const htmlCompositePaneW = 800;
 export const htmlCompositePaneH = 600;
 
+export const tilesetZoom = 1.0;
+
 // --  zIndex
 
 // 1-10 taken by layers
