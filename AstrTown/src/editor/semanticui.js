@@ -313,6 +313,12 @@ export async function initSemanticUI(g_ctx, options = {}) {
     interactionHint: document.getElementById('semantic-interaction-hint'),
     occupiedTiles: document.getElementById('semantic-occupied-tiles'),
     blocksMovement: document.getElementById('semantic-blocks-movement'),
+    appearanceCard: document.getElementById('appearance-card'),
+    appearanceCardBody: document.getElementById('appearance-card-body'),
+    appearanceCardToggle: document.getElementById('btn-collapse-appearance'),
+    appearanceAdvanced: document.getElementById('semantic-appearance-advanced'),
+    applyCurrentTileBtn: document.getElementById('btn-apply-current-tile'),
+    applyCurrentAnimationBtn: document.getElementById('btn-apply-current-animation'),
     appearanceRenderType: document.getElementById('semantic-appearance-render-type'),
     appearanceSourceType: document.getElementById('semantic-appearance-source-type'),
     appearanceSheet: document.getElementById('semantic-appearance-sheet'),
@@ -325,8 +331,11 @@ export async function initSemanticUI(g_ctx, options = {}) {
     appearanceAnchorY: document.getElementById('semantic-appearance-anchor-y'),
     appearancePreviewScale: document.getElementById('semantic-appearance-preview-scale'),
     appearancePreviewCanvas: document.getElementById('semantic-appearance-canvas'),
+    appearanceSourceWrap: document.getElementById('semantic-appearance-source-wrap'),
+    appearanceSheetWrap: document.getElementById('semantic-appearance-sheet-wrap'),
     appearanceFrameWrap: document.getElementById('semantic-appearance-frame-wrap'),
     appearanceAnimationWrap: document.getElementById('semantic-appearance-animation-wrap'),
+    appearancePreviewWrap: document.getElementById('semantic-appearance-preview-wrap'),
   };
 
   const zoneFields = {
@@ -731,28 +740,146 @@ export async function initSemanticUI(g_ctx, options = {}) {
     renderResourceStatus();
   }
 
+  function toggleAppearanceCard(expanded) {
+    if (!fields.appearanceCardBody || !fields.appearanceCardToggle) {
+      return;
+    }
+    fields.appearanceCardBody.style.display = expanded ? '' : 'none';
+    fields.appearanceCardToggle.textContent = expanded ? '收起' : '展开';
+    fields.appearanceCardToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  }
+
+  function getCurrentTileSelection() {
+    const tileWidth = Number(g_ctx.tiledimx) || 32;
+    const tileHeight = Number(g_ctx.tiledimy) || 32;
+    const activeSheet = String(g_ctx.tilesetpath || '').trim();
+    if (!activeSheet) {
+      return null;
+    }
+
+    const selectedTiles = Array.isArray(g_ctx.selected_tiles) ? g_ctx.selected_tiles : [];
+    const tileIndex = selectedTiles.length > 0
+      ? Number(selectedTiles[0]?.[2])
+      : Number(g_ctx.tile_index);
+    if (!Number.isFinite(tileIndex) || tileIndex < 0) {
+      return null;
+    }
+
+    const tilesPerRow = Number(g_ctx.tilesettilew) || 1;
+    const x = (tileIndex % tilesPerRow) * tileWidth;
+    const y = Math.floor(tileIndex / tilesPerRow) * tileHeight;
+
+    return {
+      sheet: activeSheet,
+      frameConfig: {
+        x,
+        y,
+        width: tileWidth,
+        height: tileHeight,
+      },
+    };
+  }
+
+  function getCurrentAnimationSelection() {
+    const brush = g_ctx.sceneAnimBrush || {};
+    const sheet = String(brush.sheet || '').trim();
+    const animationName = String(brush.animationName || '').trim();
+    if (!sheet || !animationName) {
+      return null;
+    }
+    return {
+      sheet,
+      animationName,
+    };
+  }
+
+  function applyTileAsAppearance(tileSelection) {
+    if (!tileSelection) {
+      alert('当前没有可用的瓦片选择');
+      return;
+    }
+
+    fields.appearanceRenderType.value = 'static';
+    fields.appearanceSourceType.value = 'tileset';
+    updateAppearanceOptions();
+    fields.appearanceSheet.value = tileSelection.sheet;
+    fields.appearanceFrameX.value = String(tileSelection.frameConfig.x);
+    fields.appearanceFrameY.value = String(tileSelection.frameConfig.y);
+    fields.appearanceFrameWidth.value = String(tileSelection.frameConfig.width);
+    fields.appearanceFrameHeight.value = String(tileSelection.frameConfig.height);
+    syncAppearanceFieldVisibility();
+  }
+
+  function applyAnimationAsAppearance(animationSelection) {
+    if (!animationSelection) {
+      alert('当前没有可用的动画选择');
+      return;
+    }
+
+    fields.appearanceRenderType.value = 'animated';
+    fields.appearanceSourceType.value = 'spritesheet';
+    updateAppearanceOptions();
+    fields.appearanceSheet.value = animationSelection.sheet;
+    updateAppearanceOptions();
+    fields.appearanceAnimationName.value = animationSelection.animationName;
+    syncAppearanceFieldVisibility();
+  }
+
+  function initAppearanceQuickActions() {
+    if (fields.applyCurrentTileBtn) {
+      fields.applyCurrentTileBtn.addEventListener('click', () => {
+        applyTileAsAppearance(getCurrentTileSelection());
+      });
+    }
+
+    if (fields.applyCurrentAnimationBtn) {
+      fields.applyCurrentAnimationBtn.addEventListener('click', () => {
+        applyAnimationAsAppearance(getCurrentAnimationSelection());
+      });
+    }
+
+    if (fields.appearanceCardToggle) {
+      fields.appearanceCardToggle.addEventListener('click', () => {
+        const expanded = fields.appearanceCardToggle.getAttribute('aria-expanded') !== 'true';
+        toggleAppearanceCard(expanded);
+      });
+    }
+  }
+
   function syncAppearanceFieldVisibility() {
     const renderType = fields.appearanceRenderType?.value || 'none';
     const sourceType = fields.appearanceSourceType?.value || 'tileset';
+    const isNone = renderType === 'none';
+    const isAnimated = renderType === 'animated';
+    const isStatic = renderType === 'static';
 
-    if (fields.appearanceFrameWrap) {
-      fields.appearanceFrameWrap.style.display = renderType === 'static' ? '' : 'none';
-    }
-    if (fields.appearanceAnimationWrap) {
-      fields.appearanceAnimationWrap.style.display = renderType === 'animated' ? '' : 'none';
-    }
-    if (fields.appearanceSourceType?.parentElement) {
-      fields.appearanceSourceType.parentElement.style.display = renderType === 'none' ? 'none' : '';
-    }
-    if (fields.appearanceSheet?.parentElement) {
-      fields.appearanceSheet.parentElement.style.display = renderType === 'none' ? 'none' : '';
-    }
-
-    if (renderType === 'animated') {
+    if (isAnimated) {
       fields.appearanceSourceType.value = 'spritesheet';
     }
-    if (renderType === 'static' && sourceType !== 'tileset' && sourceType !== 'spritesheet') {
+    if (isStatic && sourceType !== 'tileset' && sourceType !== 'spritesheet') {
       fields.appearanceSourceType.value = 'tileset';
+    }
+
+    if (fields.appearanceSourceWrap) {
+      fields.appearanceSourceWrap.style.display = isNone ? 'none' : '';
+    }
+    if (fields.appearanceSheetWrap) {
+      fields.appearanceSheetWrap.style.display = isNone ? 'none' : '';
+    }
+    if (fields.appearanceAnimationWrap) {
+      fields.appearanceAnimationWrap.style.display = isAnimated ? '' : 'none';
+    }
+    if (fields.appearanceFrameWrap) {
+      fields.appearanceFrameWrap.style.display = isStatic ? '' : 'none';
+    }
+    if (fields.appearanceAdvanced) {
+      fields.appearanceAdvanced.style.display = isNone ? 'none' : '';
+    }
+    if (fields.applyCurrentTileBtn) {
+      fields.applyCurrentTileBtn.style.display = isAnimated ? 'none' : '';
+    }
+    if (fields.applyCurrentAnimationBtn) {
+      fields.applyCurrentAnimationBtn.style.display = isStatic ? 'none' : '';
     }
 
     updateAppearanceOptions();
@@ -1406,6 +1533,12 @@ export async function initSemanticUI(g_ctx, options = {}) {
       objectInstances: placer.getObjectInstances(),
       zones: zoner.getZones(),
     };
+  }
+
+  initAppearanceQuickActions();
+  toggleAppearanceCard(true);
+  if (fields.appearanceAdvanced) {
+    fields.appearanceAdvanced.open = false;
   }
 
   if (togglePanelBtn) {

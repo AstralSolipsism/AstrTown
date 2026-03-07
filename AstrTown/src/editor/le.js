@@ -93,53 +93,120 @@ function normalizeResourceUrl(input) {
     return input.trim();
 }
 
+function getFileNameFromPath(input) {
+    const normalized = normalizeResourceUrl(input).replace(/\\/g, '/');
+    if (!normalized) {
+        return '';
+    }
+    const segments = normalized.split('/').filter(Boolean);
+    return segments.pop() || normalized;
+}
+
+function createResourceEntry(type, key, extra = {}) {
+    const normalizedKey = normalizeResourceUrl(key);
+    const fileName = extra.fileName || getFileNameFromPath(normalizedKey);
+    return {
+        key: normalizedKey,
+        name: normalizedKey,
+        label: fileName || normalizedKey,
+        type,
+        sourceKind: extra.sourceKind || 'builtin',
+        fileName: fileName || normalizedKey,
+        isActive: !!extra.isActive,
+        path: extra.path || normalizedKey,
+        meta: extra.meta || null,
+        animations: Array.isArray(extra.animations) ? extra.animations.slice() : [],
+        sheet: extra.sheet || null,
+    };
+}
+
 function getOrCreateResourceRegistry() {
     if (!g_ctx.resourceRegistry) {
         g_ctx.resourceRegistry = {
             tilesets: [],
             spritesheets: [],
+            activeTileset: null,
+            activeSpritesheet: null,
         };
     }
     return g_ctx.resourceRegistry;
 }
 
-function registerTilesetResource(url) {
-    const normalizedUrl = normalizeResourceUrl(url);
-    if (!normalizedUrl) {
-        return;
-    }
+function setActiveResource(type, key) {
+    const normalizedKey = normalizeResourceUrl(key);
     const registry = getOrCreateResourceRegistry();
-    const exists = registry.tilesets.some((item) => item.key === normalizedUrl);
-    if (!exists) {
-        registry.tilesets.push({
-            key: normalizedUrl,
-            label: normalizedUrl,
+    const listName = type === 'spritesheet' ? 'spritesheets' : 'tilesets';
+    const activeField = type === 'spritesheet' ? 'activeSpritesheet' : 'activeTileset';
+    const list = registry[listName];
+
+    list.forEach((item) => {
+        item.isActive = !!normalizedKey && item.key === normalizedKey;
+    });
+
+    registry[activeField] = normalizedKey || null;
+}
+
+function registerTilesetResource(resourceName, path = resourceName, meta = {}) {
+    const normalizedKey = normalizeResourceUrl(resourceName || path);
+    const normalizedPath = normalizeResourceUrl(path || resourceName);
+    if (!normalizedKey || !normalizedPath) {
+        return null;
+    }
+
+    const registry = getOrCreateResourceRegistry();
+    const existing = registry.tilesets.find((item) => item.key === normalizedKey);
+    const nextEntry = createResourceEntry('tileset', normalizedKey, {
+        ...meta,
+        path: normalizedPath,
+        fileName: meta.fileName || getFileNameFromPath(normalizedPath),
+        meta: meta.meta || meta,
+    });
+
+    if (existing) {
+        Object.assign(existing, nextEntry, {
+            sheet: existing.sheet,
+            animations: existing.animations,
         });
+    } else {
+        registry.tilesets.push(nextEntry);
+    }
+
+    if (meta.isActive || !registry.activeTileset) {
+        setActiveResource('tileset', normalizedKey);
     }
 
     if (g_ctx.semantic && typeof g_ctx.semantic.refreshCatalog === 'function') {
         g_ctx.semantic.refreshCatalog();
     }
+
+    return registry.tilesets.find((item) => item.key === normalizedKey) || null;
 }
 
-function registerSpritesheetResource(name, sheet) {
+function registerSpritesheetResource(name, sheet, meta = {}) {
     const normalizedName = normalizeResourceUrl(name);
     if (!normalizedName || !sheet) {
-        return;
+        return null;
     }
 
     const registry = getOrCreateResourceRegistry();
     const animations = Object.keys(sheet.animations || {});
-    const existing = registry.spritesheets.find((item) => item.name === normalizedName);
+    const existing = registry.spritesheets.find((item) => item.key === normalizedName);
+    const nextEntry = createResourceEntry('spritesheet', normalizedName, {
+        ...meta,
+        fileName: meta.fileName || getFileNameFromPath(normalizedName),
+        animations,
+        sheet,
+        path: meta.path || normalizedName,
+    });
+
     if (existing) {
-        existing.sheet = sheet;
-        existing.animations = animations;
+        Object.assign(existing, nextEntry);
     } else {
-        registry.spritesheets.push({
-            name: normalizedName,
-            sheet,
-            animations,
-        });
+        registry.spritesheets.push(nextEntry);
+    }
+
+    if (meta.isActive || !registry.activeSpritesheet) {
+        setActiveResource('spritesheet', normalizedName);
     }
 
     if (g_ctx.semantic && typeof g_ctx.semantic.refreshCatalog === 'function') {
@@ -153,6 +220,22 @@ function registerSpritesheetResource(name, sheet) {
     } else if (typeof g_ctx.refreshSceneAnimationUI === 'function') {
         g_ctx.refreshSceneAnimationUI();
     }
+
+    return registry.spritesheets.find((item) => item.key === normalizedName) || null;
+}
+
+function getTilesetRegistryEntryByName(name) {
+    const normalizedName = normalizeResourceUrl(name);
+    if (!normalizedName) {
+        return null;
+    }
+    const registry = getOrCreateResourceRegistry();
+    return registry.tilesets.find((item) => item.key === normalizedName || item.path === normalizedName) || null;
+}
+
+function getActiveTilesetRegistryEntry() {
+    const registry = getOrCreateResourceRegistry();
+    return getTilesetRegistryEntryByName(registry.activeTileset || g_ctx.tilesetpath);
 }
 
 function getSpritesheetRegistryEntryByName(name) {
@@ -161,11 +244,51 @@ function getSpritesheetRegistryEntryByName(name) {
         return null;
     }
     const registry = getOrCreateResourceRegistry();
-    return registry.spritesheets.find((item) => item.name === normalizedName) || null;
+    return registry.spritesheets.find((item) => item.key === normalizedName || item.name === normalizedName) || null;
 }
 
 function getSpritesheetByName(name) {
     return getSpritesheetRegistryEntryByName(name)?.sheet || null;
+}
+
+function getActiveSpritesheetRegistryEntry() {
+    const registry = getOrCreateResourceRegistry();
+    return getSpritesheetRegistryEntryByName(registry.activeSpritesheet || g_ctx.spritesheetname);
+}
+
+function refreshResourceToolbar() {
+    if (typeof g_ctx.refreshResourceToolbar === 'function') {
+        g_ctx.refreshResourceToolbar();
+    }
+}
+
+function applyTilesetResource(resourceName) {
+    const entry = getTilesetRegistryEntryByName(resourceName);
+    if (!entry) {
+        return false;
+    }
+
+    g_ctx.tilesetpath = entry.path;
+    setActiveResource('tileset', entry.key);
+    refreshResourceToolbar();
+    return true;
+}
+
+function applySpritesheetResource(resourceName) {
+    const entry = getSpritesheetRegistryEntryByName(resourceName);
+    if (!entry || !entry.sheet) {
+        return false;
+    }
+
+    g_ctx.spritesheet = entry.sheet;
+    g_ctx.spritesheetname = entry.name;
+    setActiveResource('spritesheet', entry.key);
+    const nextBrush = setSceneAnimBrush({ sheet: entry.name });
+    if (!nextBrush.animationName) {
+        g_ctx.g_layers[0].curanimatedtile = null;
+    }
+    refreshResourceToolbar();
+    return true;
 }
 
 function buildSceneAnimInstanceId(layer, x, y, sheet, animationName) {
@@ -420,14 +543,16 @@ function attachResourceRegistryAPI() {
     g_ctx.getResourceRegistry = () => {
         const registry = getOrCreateResourceRegistry();
         return {
+            activeTileset: registry.activeTileset,
+            activeSpritesheet: registry.activeSpritesheet,
             tilesets: registry.tilesets.map((item) => ({ ...item })),
-            spritesheets: registry.spritesheets.map((item) => ({
-                name: item.name,
-                animations: Array.isArray(item.animations) ? item.animations.slice() : [],
-                sheet: item.sheet,
-            })),
+            spritesheets: registry.spritesheets.map((item) => ({ ...item })),
         };
     };
+    g_ctx.getActiveTilesetResource = () => getActiveTilesetRegistryEntry();
+    g_ctx.getActiveSpritesheetResource = () => getActiveSpritesheetRegistryEntry();
+    g_ctx.applyTilesetResource = (name) => applyTilesetResource(name);
+    g_ctx.applySpritesheetResource = (name) => applySpritesheetResource(name);
 }
 
 function getTilesetCanvas() {
@@ -582,8 +707,20 @@ function refreshTilesetCanvasMetrics() {
         return;
     }
 
+    const pane = document.getElementById('tilesetpane');
+    const container = document.getElementById('tileset-container');
+
     g_ctx.tilesetBaseWidth = g_ctx.tilesetpxw || canvas.width;
     g_ctx.tilesetBaseHeight = g_ctx.tilesetpxh || canvas.height;
+
+    if (container) {
+        container.style.minWidth = '0';
+    }
+    if (pane) {
+        pane.style.minWidth = '0';
+        pane.style.minHeight = '0';
+    }
+
     applyTilesetRenderStyle(canvas);
 
     const preferredZoom = Number.isFinite(g_ctx.tilesetZoom)
@@ -591,6 +728,12 @@ function refreshTilesetCanvasMetrics() {
         : (Number(CONFIG.tilesetZoom) || 1);
     setTilesetZoom(preferredZoom, { persistConfig: false });
     updateTilesetSelectionHighlight();
+}
+
+function requestTilesetCanvasMetricsRefresh() {
+    window.requestAnimationFrame(() => {
+        refreshTilesetCanvasMetrics();
+    });
 }
 
 function tileset_index_from_coords(x, y) {
@@ -996,18 +1139,18 @@ class TilesetContext {
         }
     }
  
-    addTileSheet(name, sheet){
+    addTileSheet(name, sheet, meta = {}){
         console.log(" tileset.addTileSheet ", sheet);
 
-        g_ctx.spritesheet = sheet;
-        g_ctx.spritesheetname = name;
-        registerSpritesheetResource(name, sheet);
+        registerSpritesheetResource(name, sheet, {
+            type: 'spritesheet',
+            sourceKind: meta.sourceKind || 'local',
+            fileName: meta.fileName || getFileNameFromPath(name),
+            path: meta.path || name,
+            isActive: meta.isActive !== false,
+        });
 
-        const nextBrush = setSceneAnimBrush({ sheet: name });
-        if (!nextBrush.animationName) {
-            console.warn("addTileSheet: spritesheet 没有可用动画，跳过预览", name);
-            g_ctx.g_layers[0].curanimatedtile = null;
-        }
+        applySpritesheetResource(name);
     }
 } // class TilesetContext
 
@@ -1096,7 +1239,13 @@ function loadAnimatedSpritesFromModule(mod){
                         loop: sanitizeSceneAnimLoop(meta.loop ?? SCENE_ANIM_DEFAULT_LOOP),
                     });
                 }
-                registerSpritesheetResource(key, sheet);
+                registerSpritesheetResource(key, sheet, {
+                    type: 'spritesheet',
+                    sourceKind: 'builtin',
+                    fileName: getFileNameFromPath(key),
+                    path: key,
+                    isActive: false,
+                });
                 g_ctx.spritesheet     = null;
                 g_ctx.spritesheetname = null;
             }
@@ -1133,7 +1282,13 @@ function loadMapFromModuleFinish(mod) {
 
 function loadMapFromModule(mod) {
     g_ctx.tilesetpath = mod.tilesetpath;
-    registerTilesetResource(g_ctx.tilesetpath);
+    registerTilesetResource(mod.tilesetpath, mod.tilesetpath, {
+        type: 'tileset',
+        sourceKind: 'builtin',
+        fileName: getFileNameFromPath(mod.tilesetpath),
+        isActive: true,
+    });
+    refreshResourceToolbar();
     initTilesSync(loadMapFromModuleFinish.bind(null, mod));
     initTiles();
 }
@@ -2297,7 +2452,13 @@ function initTilesSync(callme) {
 const initTilesConfig = async () => {
 
     g_ctx.tilesetpath = CONFIG.DEFAULTTILESETPATH;
-    registerTilesetResource(g_ctx.tilesetpath);
+    registerTilesetResource(g_ctx.tilesetpath, g_ctx.tilesetpath, {
+        type: 'tileset',
+        sourceKind: 'builtin',
+        fileName: getFileNameFromPath(g_ctx.tilesetpath),
+        isActive: true,
+    });
+    refreshResourceToolbar();
 
     return new Promise((resolve, reject) => {
         
@@ -2364,10 +2525,31 @@ async function init() {
     UI.initMainHTMLWindow();
     attachResourceRegistryAPI();
 
+    g_ctx.onWorkspaceLayoutChange = requestTilesetCanvasMetricsRefresh;
+    window.addEventListener('resize', requestTilesetCanvasMetricsRefresh);
+
     bindTilesetToolbar();
     bindTilesetWheelZoom();
     UI.bindInspectorResizer();
+    UI.bindResourcePanelResizer();
     UI.bindTilesetPrimaryActions();
+    UI.initResourceToolbar({
+        getResourceRegistry: g_ctx.getResourceRegistry,
+        getActiveTilesetResource: () => getActiveTilesetRegistryEntry(),
+        getActiveSpritesheetResource: () => getActiveSpritesheetRegistryEntry(),
+        onTilesetChange: (resourceName) => {
+            if (!applyTilesetResource(resourceName)) {
+                return false;
+            }
+            loadMapFromModule(g_ctx);
+            return true;
+        },
+        onSpritesheetChange: (resourceName) => applySpritesheetResource(resourceName),
+        onUseDefaultTileset: () => {
+            applyTilesetResource(CONFIG.DEFAULTTILESETPATH);
+            loadMapFromModule(g_ctx);
+        },
+    });
 
     // We need to load the Tileset to know how to size things. So we block until done.
     await initTilesConfig();

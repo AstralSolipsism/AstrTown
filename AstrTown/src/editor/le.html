@@ -41,86 +41,60 @@
 
   <!-- 主工作区 -->
   <div id="app-workspace">
-    <!-- 左侧导航 -->
-    <nav id="app-sidebar" aria-label="编辑器功能导航">
-      <button class="sidebar-btn active" data-panel="terrain" type="button" title="地形绘制">🗺</button>
-      <button class="sidebar-btn" data-panel="layers" type="button" title="图层管理">📋</button>
-      <button class="sidebar-btn" data-panel="sem-objects" type="button" title="语义物体">📌</button>
-      <button class="sidebar-btn" data-panel="sem-zones" type="button" title="语义区域">🔲</button>
-      <button class="sidebar-btn" data-panel="files" type="button" title="资源文件">📁</button>
-    </nav>
+    <div id="workspace-main">
+      <!-- 左侧导航 -->
+      <nav id="app-sidebar" aria-label="编辑器功能导航">
+        <button class="sidebar-btn active" data-panel="terrain" type="button" title="地形绘制">🗺</button>
+        <button class="sidebar-btn" data-panel="layers" type="button" title="图层管理">📋</button>
+        <button class="sidebar-btn" data-panel="sem-objects" type="button" title="语义物体">📌</button>
+        <button class="sidebar-btn" data-panel="sem-zones" type="button" title="语义区域">🔲</button>
+        <button class="sidebar-btn" data-panel="files" type="button" title="资源文件">📁</button>
+      </nav>
 
-    <!-- 中央画布区 -->
-    <div id="app-canvas-area">
-      <div id="canvas-wrapper">
-        <div id="compositepane">
-          <canvas id="composite" width="2048" height="1536"></canvas>
-        </div>
-
-        <!-- 后台隐藏画布：保留旧 DOM id 兼容已有初始化逻辑 -->
-        <div id="layer0pane" class="legacy-hidden-pane">
-          <canvas id="level0" class="bg-canvas" width="2048" height="1536"></canvas>
-        </div>
-        <div id="layer1pane" class="legacy-hidden-pane">
-          <canvas id="level1" class="bg-canvas" width="2048" height="1536"></canvas>
-        </div>
-        <div id="layer2pane" class="legacy-hidden-pane">
-          <canvas id="level3" class="bg-canvas" width="2048" height="1536"></canvas>
-        </div>
-        <div id="layer3pane" class="legacy-hidden-pane">
-          <canvas id="level4" class="bg-canvas" width="2048" height="1536"></canvas>
-        </div>
-
-        <!-- 兼容旧 map 视图初始化 -->
-        <div id="map" class="legacy-hidden-pane tabcontent">
-          <canvas id="mapcanvas" width="2048" height="1536"></canvas>
-        </div>
-      </div>
-    </div>
-
-    <div id="inspector-resizer" role="separator" aria-orientation="vertical" aria-label="调整右侧面板宽度"></div>
-
-    <!-- 右侧属性区 -->
-    <aside id="app-inspector">
-      <!-- 地形面板 -->
-      <div class="inspector-panel" id="panel-terrain">
-        <div class="panel-section">
-          <h3 class="panel-title">激活图层</h3>
-          <div id="active-layer-selector">
-            <button class="layer-btn active" data-layer="0" type="button">背景层 0</button>
-            <button class="layer-btn" data-layer="1" type="button">背景层 1</button>
-            <button class="layer-btn" data-layer="2" type="button">物件层 0</button>
-            <button class="layer-btn" data-layer="3" type="button">物件层 1</button>
+      <!-- 中央画布区 -->
+      <div id="app-canvas-area">
+        <div id="canvas-wrapper">
+          <div id="compositepane">
+            <canvas id="composite" width="2048" height="1536"></canvas>
           </div>
-        </div>
 
-        <div class="panel-section">
-          <h3 class="panel-title">瓦片选择</h3>
-          <div id="tileset-container">
-            <div id="tileset-main-actions">
-              <button id="btn-change-tileset" class="tileset-action-btn" type="button">更换 Tileset</button>
-              <span id="tileset-current-label" class="tileset-current-label">当前资源：-</span>
-            </div>
-            <div id="tileset-toolbar" role="group" aria-label="瓦片工具栏">
-              <div id="tileset-zoom-group" class="tileset-toolbar-group" aria-label="瓦片缩放">
-                <button class="tileset-zoom-btn" type="button" data-zoom="0.5">50%</button>
-                <button class="tileset-zoom-btn" type="button" data-zoom="0.75">75%</button>
-                <button class="tileset-zoom-btn is-active" type="button" data-zoom="1">100%</button>
-                <button class="tileset-zoom-btn" type="button" data-zoom="1.25">125%</button>
-                <button class="tileset-zoom-btn" type="button" data-zoom="1.5">150%</button>
-                <button id="tileset-zoom-reset" class="tileset-zoom-btn" type="button" data-zoom="reset">重置</button>
-              </div>
-              <div id="tileset-toolbar-hint">Ctrl + 滚轮缩放</div>
-            </div>
-            <div id="tileset-roi-panel" aria-label="瓦片区域快速定位">
-              <div id="tileset-roi-list"></div>
-            </div>
-            <div id="tilesetpane">
-              <canvas id="tileset"></canvas>
-            </div>
+          <!-- 后台隐藏画布：保留旧 DOM id 兼容已有初始化逻辑 -->
+          <div id="layer0pane" class="legacy-hidden-pane">
+            <canvas id="level0" class="bg-canvas" width="2048" height="1536"></canvas>
+          </div>
+          <div id="layer1pane" class="legacy-hidden-pane">
+            <canvas id="level1" class="bg-canvas" width="2048" height="1536"></canvas>
+          </div>
+          <div id="layer2pane" class="legacy-hidden-pane">
+            <canvas id="level3" class="bg-canvas" width="2048" height="1536"></canvas>
+          </div>
+          <div id="layer3pane" class="legacy-hidden-pane">
+            <canvas id="level4" class="bg-canvas" width="2048" height="1536"></canvas>
+          </div>
+
+          <!-- 兼容旧 map 视图初始化 -->
+          <div id="map" class="legacy-hidden-pane tabcontent">
+            <canvas id="mapcanvas" width="2048" height="1536"></canvas>
           </div>
         </div>
       </div>
+
+      <div id="inspector-resizer" role="separator" aria-orientation="vertical" aria-label="调整右侧面板宽度"></div>
+
+      <!-- 右侧属性区 -->
+      <aside id="app-inspector">
+        <!-- 地形面板 -->
+        <div class="inspector-panel" id="panel-terrain">
+          <div class="panel-section">
+            <h3 class="panel-title">激活图层</h3>
+            <div id="active-layer-selector">
+              <button class="layer-btn active" data-layer="0" type="button">背景层 0</button>
+              <button class="layer-btn" data-layer="1" type="button">背景层 1</button>
+              <button class="layer-btn" data-layer="2" type="button">物件层 0</button>
+              <button class="layer-btn" data-layer="3" type="button">物件层 1</button>
+            </div>
+          </div>
+        </div>
 
       <!-- 图层管理面板 -->
       <div class="inspector-panel hidden" id="panel-layers">
@@ -202,64 +176,87 @@
               </div>
 
               <div class="semantic-field semantic-field--full">
-                <h4 class="panel-title">外观配置</h4>
-              </div>
+                <div id="appearance-card" class="config-card">
+                  <div class="card-header">
+                    <h4 class="panel-title">外观配置</h4>
+                    <button id="btn-collapse-appearance" class="collapse-btn" type="button" aria-expanded="true" aria-controls="appearance-card-body">收起</button>
+                  </div>
 
-              <div class="semantic-field">
-                <label for="semantic-appearance-render-type">渲染类型</label>
-                <select id="semantic-appearance-render-type" name="appearanceRenderType">
-                  <option value="none">none（仅占地）</option>
-                  <option value="static">static（静态贴图）</option>
-                  <option value="animated">animated（动画）</option>
-                </select>
-              </div>
+                  <div id="appearance-card-body" class="card-body">
+                    <div class="quick-actions">
+                      <button id="btn-apply-current-tile" class="semantic-btn" type="button" title="将当前选中的瓦片应用为外观">从当前瓦片创建外观</button>
+                      <button id="btn-apply-current-animation" class="semantic-btn" type="button" title="将当前选中的动画应用为外观">从当前动画创建外观</button>
+                    </div>
 
-              <div class="semantic-field" id="semantic-appearance-source-wrap">
-                <label for="semantic-appearance-source-type">资源来源</label>
-                <select id="semantic-appearance-source-type" name="appearanceSourceType">
-                  <option value="tileset">tileset</option>
-                  <option value="spritesheet">spritesheet</option>
-                </select>
-              </div>
+                    <div class="appearance-grid">
+                      <div class="semantic-field">
+                        <label for="semantic-appearance-render-type">外观类型</label>
+                        <select id="semantic-appearance-render-type" name="appearanceRenderType">
+                          <option value="none">无外观</option>
+                          <option value="static">静态贴图</option>
+                          <option value="animated">动画</option>
+                        </select>
+                      </div>
 
-              <div class="semantic-field" id="semantic-appearance-sheet-wrap">
-                <label for="semantic-appearance-sheet">贴图/动画资源</label>
-                <select id="semantic-appearance-sheet" name="appearanceSheet"></select>
-              </div>
+                      <div class="semantic-field" id="semantic-appearance-source-wrap">
+                        <label for="semantic-appearance-source-type">资源来源</label>
+                        <select id="semantic-appearance-source-type" name="appearanceSourceType">
+                          <option value="tileset">瓦片集</option>
+                          <option value="spritesheet">动画资源</option>
+                        </select>
+                      </div>
 
-              <div class="semantic-field" id="semantic-appearance-animation-wrap">
-                <label for="semantic-appearance-animation">动画名称</label>
-                <select id="semantic-appearance-animation" name="appearanceAnimationName"></select>
-              </div>
+                      <div class="semantic-field semantic-field--full" id="semantic-appearance-sheet-wrap">
+                        <label for="semantic-appearance-sheet">选择资源</label>
+                        <select id="semantic-appearance-sheet" name="appearanceSheet"></select>
+                      </div>
 
-              <div class="semantic-field" id="semantic-appearance-anchor-x-wrap">
-                <label for="semantic-appearance-anchor-x">锚点 X</label>
-                <input id="semantic-appearance-anchor-x" name="appearanceAnchorX" type="number" step="0.01" value="0" />
-              </div>
+                      <div class="semantic-field semantic-field--full" id="semantic-appearance-animation-wrap">
+                        <label for="semantic-appearance-animation">选择动画</label>
+                        <select id="semantic-appearance-animation" name="appearanceAnimationName"></select>
+                      </div>
+                    </div>
 
-              <div class="semantic-field" id="semantic-appearance-anchor-y-wrap">
-                <label for="semantic-appearance-anchor-y">锚点 Y</label>
-                <input id="semantic-appearance-anchor-y" name="appearanceAnchorY" type="number" step="0.01" value="0" />
-              </div>
+                    <div class="semantic-field semantic-field--full" id="semantic-appearance-preview-wrap">
+                      <label for="semantic-appearance-canvas">外观预览</label>
+                      <div class="appearance-preview">
+                        <canvas id="semantic-appearance-canvas" width="128" height="128"></canvas>
+                      </div>
+                    </div>
 
-              <div class="semantic-field" id="semantic-appearance-preview-scale-wrap">
-                <label for="semantic-appearance-preview-scale">预览缩放</label>
-                <input id="semantic-appearance-preview-scale" name="appearancePreviewScale" type="number" step="0.1" min="0.1" value="1" />
-              </div>
+                    <details class="advanced-params" id="semantic-appearance-advanced">
+                      <summary>高级参数</summary>
+                      <div class="advanced-params-body">
+                        <div class="semantic-field semantic-field--full" id="semantic-appearance-frame-wrap">
+                          <label>静态帧（x,y,width,height）</label>
+                          <div class="semantic-frame-grid">
+                            <input id="semantic-appearance-frame-x" name="appearanceFrameX" type="number" step="1" value="0" />
+                            <input id="semantic-appearance-frame-y" name="appearanceFrameY" type="number" step="1" value="0" />
+                            <input id="semantic-appearance-frame-width" name="appearanceFrameWidth" type="number" step="1" value="32" />
+                            <input id="semantic-appearance-frame-height" name="appearanceFrameHeight" type="number" step="1" value="32" />
+                          </div>
+                        </div>
 
-              <div class="semantic-field semantic-field--full" id="semantic-appearance-frame-wrap">
-                <label>静态帧（x,y,width,height）</label>
-                <div class="semantic-frame-grid">
-                  <input id="semantic-appearance-frame-x" name="appearanceFrameX" type="number" step="1" value="0" />
-                  <input id="semantic-appearance-frame-y" name="appearanceFrameY" type="number" step="1" value="0" />
-                  <input id="semantic-appearance-frame-width" name="appearanceFrameWidth" type="number" step="1" value="32" />
-                  <input id="semantic-appearance-frame-height" name="appearanceFrameHeight" type="number" step="1" value="32" />
+                        <div class="appearance-advanced-grid">
+                          <div class="semantic-field" id="semantic-appearance-anchor-x-wrap">
+                            <label for="semantic-appearance-anchor-x">锚点 X</label>
+                            <input id="semantic-appearance-anchor-x" name="appearanceAnchorX" type="number" step="0.01" value="0" />
+                          </div>
+
+                          <div class="semantic-field" id="semantic-appearance-anchor-y-wrap">
+                            <label for="semantic-appearance-anchor-y">锚点 Y</label>
+                            <input id="semantic-appearance-anchor-y" name="appearanceAnchorY" type="number" step="0.01" value="0" />
+                          </div>
+
+                          <div class="semantic-field" id="semantic-appearance-preview-scale-wrap">
+                            <label for="semantic-appearance-preview-scale">预览缩放</label>
+                            <input id="semantic-appearance-preview-scale" name="appearancePreviewScale" type="number" step="0.1" min="0.1" value="1" />
+                          </div>
+                        </div>
+                      </div>
+                    </details>
+                  </div>
                 </div>
-              </div>
-
-              <div class="semantic-field semantic-field--full" id="semantic-appearance-preview-wrap">
-                <label for="semantic-appearance-canvas">外观预览</label>
-                <canvas id="semantic-appearance-canvas" width="128" height="128"></canvas>
               </div>
 
               <div class="btn-row">
@@ -399,6 +396,60 @@
         </div>
       </div>
     </aside>
+    </div>
+
+    <div id="vertical-resizer" role="separator" aria-orientation="horizontal" aria-label="调整底部资源区高度"></div>
+
+    <section id="bottom-resource-panel" aria-label="底部瓦片资源区">
+      <div id="bottom-resource-header">
+        <h3 class="panel-title">瓦片资源区</h3>
+        <div id="tileset-toolbar-hint">Ctrl + 滚轮缩放</div>
+      </div>
+      <div id="bottom-resource-body">
+        <div id="resource-toolbar">
+          <div class="resource-type-tabs">
+            <button id="tab-tileset" class="active" type="button">瓦片集</button>
+            <button id="tab-spritesheet" type="button">动画资源</button>
+          </div>
+          <div class="resource-selector">
+            <select id="resource-select">
+              <option value="">选择资源...</option>
+            </select>
+          </div>
+          <div class="resource-actions">
+            <button id="btn-import-tileset" type="button" title="导入本地瓦片集">导入瓦片集</button>
+            <button id="btn-import-spritesheet" type="button" title="导入本地动画资源">导入动画</button>
+            <button id="btn-use-default" type="button" title="使用地图默认瓦片集">默认瓦片</button>
+          </div>
+          <div class="resource-info">
+            <span id="current-resource-name">当前：gentle.png</span>
+            <span id="current-resource-source">来源：地图默认</span>
+          </div>
+        </div>
+        <div id="tileset-container">
+          <div id="tileset-main-actions">
+            <button id="btn-change-tileset" class="tileset-action-btn" type="button">更换 Tileset</button>
+            <span id="tileset-current-label" class="tileset-current-label">当前资源：-</span>
+          </div>
+          <div id="tileset-toolbar" role="group" aria-label="瓦片工具栏">
+            <div id="tileset-zoom-group" class="tileset-toolbar-group" aria-label="瓦片缩放">
+              <button class="tileset-zoom-btn" type="button" data-zoom="0.5">50%</button>
+              <button class="tileset-zoom-btn" type="button" data-zoom="0.75">75%</button>
+              <button class="tileset-zoom-btn is-active" type="button" data-zoom="1">100%</button>
+              <button class="tileset-zoom-btn" type="button" data-zoom="1.25">125%</button>
+              <button class="tileset-zoom-btn" type="button" data-zoom="1.5">150%</button>
+              <button id="tileset-zoom-reset" class="tileset-zoom-btn" type="button" data-zoom="reset">重置</button>
+            </div>
+          </div>
+          <div id="tileset-roi-panel" aria-label="瓦片区域快速定位">
+            <div id="tileset-roi-list"></div>
+          </div>
+          <div id="tilesetpane">
+            <canvas id="tileset"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 
   <!-- 底部状态栏 -->

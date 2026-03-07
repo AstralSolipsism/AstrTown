@@ -94,9 +94,17 @@ textarea {
 }
 
 #app-workspace {
+  --resource-panel-h: 32vh;
   min-height: 0;
   display: grid;
-  grid-template-columns: var(--sidebar-w) 1fr 6px var(--inspector-w);
+  grid-template-rows: minmax(0, 1fr) 8px minmax(220px, var(--resource-panel-h));
+}
+
+#workspace-main {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 6px var(--inspector-w);
 }
 
 #app-sidebar {
@@ -138,6 +146,7 @@ textarea {
 #canvas-wrapper {
   width: 100%;
   height: 100%;
+  min-height: 0;
   overflow: auto;
   position: relative;
 }
@@ -145,6 +154,7 @@ textarea {
 #compositepane {
   width: 100%;
   height: 100%;
+  min-height: 0;
   overflow: auto;
   position: relative;
   background: #0b111a;
@@ -174,10 +184,127 @@ textarea {
 }
 
 #app-inspector {
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   background: var(--panel);
   padding: 10px;
+}
+
+#vertical-resizer {
+  min-width: 0;
+  min-height: 0;
+  cursor: row-resize;
+  background: linear-gradient(to right, transparent 0%, var(--border) 20%, var(--border) 80%, transparent 100%);
+  opacity: 0.9;
+}
+
+#vertical-resizer:hover,
+#vertical-resizer.is-dragging {
+  background: var(--focus);
+}
+
+#bottom-resource-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+#bottom-resource-panel .panel-section {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  border-top: 1px solid var(--border);
+}
+
+#bottom-resource-panel .panel-section:first-child {
+  border-top: 0;
+}
+
+#bottom-resource-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+#bottom-resource-body {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+
+#resource-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(200px, 280px) auto minmax(220px, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0f172a;
+}
+
+.resource-type-tabs,
+.resource-actions,
+.resource-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.resource-type-tabs button,
+.resource-actions button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #111827;
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.resource-type-tabs button.active,
+.resource-actions button:hover {
+  border-color: var(--focus);
+}
+
+.resource-selector select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #111827;
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.resource-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.resource-info {
+  justify-content: flex-end;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.resource-info span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .inspector-panel {
@@ -245,15 +372,9 @@ textarea {
   gap: 10px;
 }
 
-#panel-terrain .panel-section:last-child {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
 #tileset-container {
   width: 100%;
-  min-height: 420px;
+  min-height: 0;
   flex: 1;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -522,6 +643,97 @@ textarea {
 #semantic-zone-primary {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.config-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f172a;
+  overflow: hidden;
+}
+
+.config-card .card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.92);
+}
+
+.config-card .card-header .panel-title {
+  margin: 0;
+}
+
+.config-card .card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+
+.collapse-btn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #111827;
+  color: var(--text);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.collapse-btn:hover {
+  border-color: var(--focus);
+}
+
+.quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.appearance-grid,
+.appearance-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.appearance-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 140px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #111827;
+  padding: 12px;
+}
+
+.advanced-params {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #111827;
+}
+
+.advanced-params summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 10px 12px;
+  user-select: none;
+}
+
+.advanced-params-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 12px 12px;
+}
+
+.semantic-frame-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 
 #semantic-appearance-canvas {

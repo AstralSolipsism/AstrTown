@@ -61,6 +61,9 @@ export function bindInspectorResizer() {
         const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
         const nextWidth = Math.min(maxWidth, Math.max(minWidth, viewportWidth - event.clientX));
         document.documentElement.style.setProperty('--inspector-w', `${nextWidth}px`);
+        if (typeof g_ctx.onWorkspaceLayoutChange === 'function') {
+            g_ctx.onWorkspaceLayoutChange();
+        }
     };
 
     const stopDragging = () => {
@@ -69,6 +72,9 @@ export function bindInspectorResizer() {
         document.body.style.userSelect = '';
         window.removeEventListener('pointermove', onPointerMove);
         window.removeEventListener('pointerup', stopDragging);
+        if (typeof g_ctx.onWorkspaceLayoutChange === 'function') {
+            g_ctx.onWorkspaceLayoutChange();
+        }
     };
 
     resizer.addEventListener('pointerdown', (event) => {
@@ -81,6 +87,59 @@ export function bindInspectorResizer() {
     });
 
     g_ctx._inspectorResizerBound = true;
+}
+
+export function bindResourcePanelResizer() {
+    if (g_ctx._resourcePanelResizerBound) {
+        return;
+    }
+
+    const resizer = document.getElementById('vertical-resizer');
+    const workspace = document.getElementById('app-workspace');
+    if (!resizer || !workspace) {
+        return;
+    }
+
+    const minHeight = 220;
+    let dragging = false;
+
+    const onPointerMove = (event) => {
+        if (!dragging) {
+            return;
+        }
+
+        const workspaceRect = workspace.getBoundingClientRect();
+        const nextHeight = workspaceRect.bottom - event.clientY;
+        const maxHeight = Math.max(minHeight, Math.floor(workspaceRect.height * 0.5));
+        const clampedHeight = Math.min(maxHeight, Math.max(minHeight, nextHeight));
+
+        workspace.style.setProperty('--resource-panel-h', `${clampedHeight}px`);
+        if (typeof g_ctx.onWorkspaceLayoutChange === 'function') {
+            g_ctx.onWorkspaceLayoutChange();
+        }
+    };
+
+    const stopDragging = () => {
+        dragging = false;
+        resizer.classList.remove('is-dragging');
+        document.body.style.userSelect = '';
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', stopDragging);
+        if (typeof g_ctx.onWorkspaceLayoutChange === 'function') {
+            g_ctx.onWorkspaceLayoutChange();
+        }
+    };
+
+    resizer.addEventListener('pointerdown', (event) => {
+        dragging = true;
+        resizer.classList.add('is-dragging');
+        document.body.style.userSelect = 'none';
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', stopDragging);
+        event.preventDefault();
+    });
+
+    g_ctx._resourcePanelResizerBound = true;
 }
 
 function groupBookmarksByCategory(bookmarks = []) {
@@ -116,6 +175,24 @@ function getTilesetDisplayName(tilesetPath) {
     return segments.pop() || '';
 }
 
+function getResourceKindLabel(sourceKind, resourceType) {
+    if (sourceKind === 'local') {
+        return '本地导入';
+    }
+    if (resourceType === 'spritesheet') {
+        return '内置动画资源';
+    }
+    return '地图默认';
+}
+
+function getToolbarResourceType() {
+    return g_ctx.resourceToolbarType === 'spritesheet' ? 'spritesheet' : 'tileset';
+}
+
+function setToolbarResourceType(type) {
+    g_ctx.resourceToolbarType = type === 'spritesheet' ? 'spritesheet' : 'tileset';
+}
+
 export function renderTilesetBookmarks() {
     const list = document.getElementById('tileset-roi-list');
     const pane = document.getElementById('tilesetpane');
@@ -124,8 +201,21 @@ export function renderTilesetBookmarks() {
     }
 
     const tilesetZoom = Number.isFinite(g_ctx.tilesetZoom) ? g_ctx.tilesetZoom : 1;
-    const bookmarks = getTilesetBookmarks(g_ctx.tilesetpath);
+    const activeTileset = typeof g_ctx.getActiveTilesetResource === 'function'
+        ? g_ctx.getActiveTilesetResource()
+        : null;
+    const isBuiltinTileset = !activeTileset || activeTileset.sourceKind === 'builtin';
+    const lookupPath = activeTileset?.path || g_ctx.tilesetpath;
+    const bookmarks = isBuiltinTileset ? getTilesetBookmarks(lookupPath) : [];
     list.innerHTML = '';
+
+    if (!isBuiltinTileset) {
+        const empty = document.createElement('div');
+        empty.id = 'tileset-roi-empty';
+        empty.textContent = '自定义资源无预设分类';
+        list.appendChild(empty);
+        return;
+    }
 
     if (!Array.isArray(bookmarks) || bookmarks.length === 0) {
         const empty = document.createElement('div');
@@ -181,14 +271,36 @@ export function bindTilesetPrimaryActions() {
     g_ctx._tilesetPrimaryActionsBound = true;
 }
 
-export function updateTilesetMetaLabel() {
+export function updateResourceInfo() {
+    const nameNode = document.getElementById('current-resource-name');
+    const sourceNode = document.getElementById('current-resource-source');
     const label = document.getElementById('tileset-current-label');
-    if (!label) {
-        return;
-    }
+    const type = getToolbarResourceType();
+    const activeResource = type === 'spritesheet'
+        ? (typeof g_ctx.getActiveSpritesheetResource === 'function' ? g_ctx.getActiveSpritesheetResource() : null)
+        : (typeof g_ctx.getActiveTilesetResource === 'function' ? g_ctx.getActiveTilesetResource() : null);
 
-    const source = getTilesetDisplayName(g_ctx.tilesetpath);
-    label.textContent = source ? `当前资源：${source}` : '当前资源：-';
+    const displayName = activeResource?.fileName || activeResource?.label || getTilesetDisplayName(g_ctx.tilesetpath) || '-';
+    const sourceLabel = activeResource
+        ? `来源：${getResourceKindLabel(activeResource.sourceKind, activeResource.type)}${activeResource.path ? ` · ${activeResource.path}` : ''}`
+        : '来源：-';
+    const summary = activeResource
+        ? `${activeResource.type === 'spritesheet' ? '动画资源' : '瓦片集'} · ${displayName} · ${getResourceKindLabel(activeResource.sourceKind, activeResource.type)}`
+        : '当前资源：-';
+
+    if (nameNode) {
+        nameNode.textContent = `当前：${displayName}`;
+    }
+    if (sourceNode) {
+        sourceNode.textContent = sourceLabel;
+    }
+    if (label) {
+        label.textContent = summary;
+    }
+}
+
+export function updateTilesetMetaLabel() {
+    updateResourceInfo();
 }
 
 // --
@@ -222,15 +334,31 @@ export function initSpriteSheetLoader(onSpritesheetLoaded = null) {
         if (g_ctx.debug_flag) {
             console.log("spritesheet ", fileInput.files[0].name);
         }
-        let ssname = fileInput.files[0].name;
+        const file = fileInput.files[0];
+        const ssname = file.name;
 
-        let sheet = await PIXI.Assets.load("./"+ssname);
+        let sheet = await PIXI.Assets.load("./" + ssname);
         console.log(sheet);
-        g_ctx.tileset.addTileSheet(ssname, sheet);
+        g_ctx.tileset.addTileSheet(ssname, sheet, {
+            sourceKind: 'local',
+            fileName: ssname,
+            path: ssname,
+            isActive: true,
+        });
         if (typeof onSpritesheetLoaded === 'function') {
-            onSpritesheetLoaded(ssname, sheet);
+            onSpritesheetLoaded(ssname, sheet, {
+                type: 'spritesheet',
+                sourceKind: 'local',
+                fileName: ssname,
+                path: ssname,
+                isActive: true,
+            });
         }
         g_ctx.selected_tiles = [];
+        updateResourceInfo();
+        if (typeof g_ctx.refreshResourceToolbar === 'function') {
+            g_ctx.refreshResourceToolbar();
+        }
         if (typeof g_ctx.refreshSceneAnimationUI === 'function') {
             g_ctx.refreshSceneAnimationUI();
         }
@@ -427,6 +555,135 @@ export function bindSceneAnimationUI(api = {}) {
 // initailized handler to load a new tileset 
 // --
 
+export function updateResourceSelector() {
+    const select = document.getElementById('resource-select');
+    if (!select || typeof g_ctx.getResourceRegistry !== 'function') {
+        return;
+    }
+
+    const registry = g_ctx.getResourceRegistry() || { tilesets: [], spritesheets: [] };
+    const type = getToolbarResourceType();
+    const resourceList = type === 'spritesheet' ? registry.spritesheets : registry.tilesets;
+    const activeValue = type === 'spritesheet' ? registry.activeSpritesheet : registry.activeTileset;
+
+    select.innerHTML = '';
+
+    if (!Array.isArray(resourceList) || resourceList.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = type === 'spritesheet' ? '暂无动画资源' : '暂无瓦片资源';
+        select.appendChild(option);
+        select.value = '';
+        return;
+    }
+
+    for (const item of resourceList) {
+        const option = document.createElement('option');
+        option.value = item.key || item.name || item.path || '';
+        const sourceTag = item.sourceKind === 'local' ? '本地' : '内置';
+        option.textContent = `${item.fileName || item.label || option.value} · ${sourceTag}`;
+        select.appendChild(option);
+    }
+
+    const targetValue = activeValue || resourceList[0]?.key || '';
+    select.value = targetValue;
+}
+
+export function initResourceToolbar(api = {}) {
+    if (g_ctx._resourceToolbarBound) {
+        g_ctx.refreshResourceToolbar = () => {
+            updateResourceSelector();
+            updateResourceInfo();
+            renderTilesetBookmarks();
+        };
+        g_ctx.refreshResourceToolbar();
+        return;
+    }
+
+    const tabTileset = document.getElementById('tab-tileset');
+    const tabSpritesheet = document.getElementById('tab-spritesheet');
+    const select = document.getElementById('resource-select');
+    const importTilesetBtn = document.getElementById('btn-import-tileset');
+    const importSpritesheetBtn = document.getElementById('btn-import-spritesheet');
+    const useDefaultBtn = document.getElementById('btn-use-default');
+    const tilesetFileInput = document.getElementById('tilesetfile');
+    const spritesheetFileInput = document.getElementById('spritesheet');
+
+    const refresh = () => {
+        const type = getToolbarResourceType();
+        if (tabTileset) {
+            tabTileset.classList.toggle('active', type === 'tileset');
+        }
+        if (tabSpritesheet) {
+            tabSpritesheet.classList.toggle('active', type === 'spritesheet');
+        }
+        if (importTilesetBtn) {
+            importTilesetBtn.disabled = type !== 'tileset';
+        }
+        if (importSpritesheetBtn) {
+            importSpritesheetBtn.disabled = type !== 'spritesheet';
+        }
+        if (useDefaultBtn) {
+            useDefaultBtn.disabled = type !== 'tileset';
+        }
+        updateResourceSelector();
+        updateResourceInfo();
+        renderTilesetBookmarks();
+    };
+
+    if (tabTileset) {
+        tabTileset.addEventListener('click', () => {
+            setToolbarResourceType('tileset');
+            refresh();
+        });
+    }
+
+    if (tabSpritesheet) {
+        tabSpritesheet.addEventListener('click', () => {
+            setToolbarResourceType('spritesheet');
+            refresh();
+        });
+    }
+
+    if (select) {
+        select.addEventListener('change', () => {
+            if (!select.value) {
+                return;
+            }
+            if (getToolbarResourceType() === 'spritesheet') {
+                if (typeof api.onSpritesheetChange === 'function') {
+                    api.onSpritesheetChange(select.value);
+                }
+            } else if (typeof api.onTilesetChange === 'function') {
+                api.onTilesetChange(select.value);
+            }
+            refresh();
+        });
+    }
+
+    if (importTilesetBtn && tilesetFileInput) {
+        importTilesetBtn.addEventListener('click', () => tilesetFileInput.click());
+    }
+
+    if (importSpritesheetBtn && spritesheetFileInput) {
+        importSpritesheetBtn.addEventListener('click', () => spritesheetFileInput.click());
+    }
+
+    if (useDefaultBtn) {
+        useDefaultBtn.addEventListener('click', () => {
+            if (typeof api.onUseDefaultTileset === 'function') {
+                api.onUseDefaultTileset();
+            }
+            refresh();
+        });
+    }
+
+    setToolbarResourceType(getToolbarResourceType());
+    g_ctx.refreshResourceToolbar = refresh;
+    g_ctx._resourceToolbarBound = true;
+    refresh();
+}
+
 export function initTilesetLoader(callme, onTilesetChanged = null) {
     const fileInput = document.getElementById('tilesetfile');
     fileInput.onchange = async (evt) => {
@@ -434,12 +691,21 @@ export function initTilesetLoader(callme, onTilesetChanged = null) {
         if (g_ctx.debug_flag) {
             console.log("tilesetfile ", fileInput.files[0].name);
         }
-        g_ctx.tilesetpath =  "./tilesets/"+fileInput.files[0].name;
+        const file = fileInput.files[0];
+        g_ctx.tilesetpath =  "./tilesets/" + file.name;
         updateTilesetMetaLabel();
         if (typeof onTilesetChanged === 'function') {
-            onTilesetChanged(g_ctx.tilesetpath);
+            onTilesetChanged(g_ctx.tilesetpath, g_ctx.tilesetpath, {
+                type: 'tileset',
+                sourceKind: 'local',
+                fileName: file.name,
+                isActive: true,
+            });
         }
 
+        if (typeof g_ctx.refreshResourceToolbar === 'function') {
+            g_ctx.refreshResourceToolbar();
+        }
         callme();
     }
 }
