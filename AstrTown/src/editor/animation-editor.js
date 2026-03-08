@@ -19,6 +19,10 @@ function getDraftTemplate() {
     };
 }
 
+function isAnimationEditorReady() {
+    return !!editorCtx;
+}
+
 function ensureEditorCtx() {
     if (!editorCtx) {
         throw new Error('animation-editor 尚未初始化');
@@ -709,8 +713,15 @@ export function playAnimationPreview() {
 }
 
 export function stopAnimationPreview() {
+    if (!isAnimationEditorReady()) {
+        // 启动早期可能先切换工作区，此时动画编辑器尚未挂载完成
+        console.info('stopAnimationPreview: animation-editor 尚未初始化，跳过预览清理');
+        return;
+    }
     clearPreviewSprite();
 }
+
+export { isAnimationEditorReady };
 
 export function applyToResourceRegistry() {
     const ctx = ensureEditorCtx();

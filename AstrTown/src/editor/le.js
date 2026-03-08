@@ -46,6 +46,7 @@ import * as UI from './lehtmlui.js'
 import { initSemanticUI } from './semanticui.js';
 import {
     initAnimationEditor,
+    isAnimationEditorReady,
     playAnimationPreview,
     stopAnimationPreview,
 } from './animation-editor.js';
@@ -1519,6 +1520,13 @@ function showWorkspaceStage(stageName) {
 }
 
 function switchWorkspaceStage(primaryMode, subMode = null) {
+    const animationEditorReady = isAnimationEditorReady();
+    console.info('switchWorkspaceStage: 切换工作区阶段', {
+        primaryMode,
+        subMode,
+        animationEditorReady,
+    });
+
     hideAllWorkspaceStages();
 
     switch (primaryMode) {
@@ -1537,6 +1545,10 @@ function switchWorkspaceStage(primaryMode, subMode = null) {
             break;
         case 'animation':
             showWorkspaceStage('animationStage');
+            if (!animationEditorReady) {
+                console.info('switchWorkspaceStage: animation-editor 尚未初始化，暂不启动动画预览');
+                break;
+            }
             playAnimationPreview();
             break;
         case 'zone':
