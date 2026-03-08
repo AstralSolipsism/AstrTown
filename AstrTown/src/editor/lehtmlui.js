@@ -2,6 +2,7 @@ import * as PIXI from 'pixi.js'
 import { g_ctx }  from './lecontext.js' // global context
 import * as CONFIG from './leconfig.js'
 import { getTilesetBookmarks } from './tileset-meta.js'
+import { openAssetPicker, registerUserAssetToEditor } from './asset-picker-bridge.js'
 
 // --
 //  Set sizes and limits for HTML in main UI
@@ -34,6 +35,22 @@ export function initMainHTMLWindow() {
     if (mapPane) {
         mapPane.style.display = 'none';
     }
+}
+
+export function updateAuthStatus(user) {
+    const authNode = document.getElementById('status-auth');
+    if (!authNode) {
+        return;
+    }
+
+    if (user && typeof user.username === 'string' && user.username.trim()) {
+        authNode.textContent = `用户：${user.username}`;
+        authNode.title = `当前已登录用户：${user.username}`;
+        return;
+    }
+
+    authNode.textContent = '用户：未登录（可继续使用本地编辑功能）';
+    authNode.title = '当前未登录，仅可使用无需认证的本地编辑功能';
 }
 
 // --
@@ -178,6 +195,9 @@ function getTilesetDisplayName(tilesetPath) {
 function getResourceKindLabel(sourceKind, resourceType) {
     if (sourceKind === 'local') {
         return '本地导入';
+    }
+    if (sourceKind === 'userAsset') {
+        return resourceType === 'spritesheet' ? '资源库动画' : '资源库瓦片集';
     }
     if (resourceType === 'spritesheet') {
         return '内置动画资源';
@@ -611,6 +631,7 @@ export function initResourceToolbar(api = {}) {
     const select = document.getElementById('resource-select');
     const importTilesetBtn = document.getElementById('btn-import-tileset');
     const importSpritesheetBtn = document.getElementById('btn-import-spritesheet');
+    const libraryPickBtn = document.getElementById('btn-pick-library-asset');
     const useDefaultBtn = document.getElementById('btn-use-default');
     const tilesetFileInput = document.getElementById('tilesetfile');
     const spritesheetFileInput = document.getElementById('spritesheet');
@@ -628,6 +649,10 @@ export function initResourceToolbar(api = {}) {
         }
         if (importSpritesheetBtn) {
             importSpritesheetBtn.disabled = type !== 'spritesheet';
+        }
+        if (libraryPickBtn) {
+            libraryPickBtn.disabled = false;
+            libraryPickBtn.textContent = type === 'spritesheet' ? '从资源库选择动画' : '从资源库选择';
         }
         if (useDefaultBtn) {
             useDefaultBtn.disabled = type !== 'tileset';
@@ -673,6 +698,32 @@ export function initResourceToolbar(api = {}) {
 
     if (importSpritesheetBtn && spritesheetFileInput) {
         importSpritesheetBtn.addEventListener('click', () => spritesheetFileInput.click());
+    }
+
+    if (libraryPickBtn) {
+        libraryPickBtn.addEventListener('click', () => {
+            const type = getToolbarResourceType();
+            openAssetPicker({
+                assetKind: type === 'spritesheet' ? 'sceneAnimation' : 'tileset',
+                onSelect: async (assetInfo) => {
+                    const entry = await registerUserAssetToEditor(assetInfo);
+                    if (assetInfo.assetKind === 'sceneAnimation') {
+                        if (typeof api.onSpritesheetChange === 'function') {
+                            api.onSpritesheetChange(entry.key);
+                        }
+                    } else if (typeof api.onTilesetChange === 'function') {
+                        api.onTilesetChange(entry.key);
+                    }
+                    refresh();
+                    if (typeof g_ctx.refreshSceneAnimationUI === 'function') {
+                        g_ctx.refreshSceneAnimationUI();
+                    }
+                },
+                onCancel: () => {
+                    refresh();
+                },
+            });
+        });
     }
 
     if (useDefaultBtn) {

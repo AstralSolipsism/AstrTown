@@ -43,7 +43,14 @@ import * as CONFIG from './leconfig.js'
 import * as UNDO from './undo.js'
 import * as MAPFILE from './mapfile.js'
 import * as UI from './lehtmlui.js'
+import { initEditorAuth } from './auth-bridge.js';
 import { initSemanticUI } from './semanticui.js';
+import {
+    closeAssetPicker,
+    getAssetFileUrl,
+    getSceneAnimationDetail,
+    getTilesetDetail,
+} from './asset-picker-bridge.js';
 import {
     initAnimationEditor,
     isAnimationEditorReady,
@@ -178,6 +185,8 @@ function createResourceEntry(type, key, extra = {}) {
         label: fileName || normalizedKey,
         type,
         sourceKind: extra.sourceKind || 'builtin',
+        assetId: extra.assetId ?? extra.meta?.assetId ?? null,
+        version: extra.version ?? extra.meta?.version ?? null,
         fileName: fileName || normalizedKey,
         isActive: !!extra.isActive,
         path: extra.path || normalizedKey,
@@ -1317,6 +1326,100 @@ class CompositeContext {
 
 } // class CompositeContext
 
+function normalizeTilesetRef(mod) {
+    const legacyPath = normalizeResourceUrl(mod?.tilesetpath);
+    const candidate = mod?.tilesetRef && typeof mod.tilesetRef === 'object'
+        ? mod.tilesetRef
+        : null;
+    return {
+        kind: 'tileset',
+        sourceKind: candidate?.sourceKind || 'builtin',
+        assetId: candidate?.assetId ?? null,
+        version: candidate?.version ?? null,
+        path: normalizeResourceUrl(candidate?.path || legacyPath),
+    };
+}
+
+function normalizeAnimatedSpriteSheetRef(sprite) {
+    const ref = sprite?.sheetRef && typeof sprite.sheetRef === 'object'
+        ? sprite.sheetRef
+        : null;
+    const legacySheet = normalizeResourceUrl(sprite?.sheet);
+    return {
+        kind: 'sceneAnimation',
+        sourceKind: ref?.sourceKind || 'builtin',
+        assetId: ref?.assetId ?? null,
+        version: ref?.version ?? null,
+        name: normalizeResourceUrl(ref?.name || legacySheet),
+        path: normalizeResourceUrl(ref?.path || legacySheet),
+    };
+}
+
+async function resolveTilesetSourceFromRef(tilesetRef) {
+    if (tilesetRef?.sourceKind === 'userAsset' && tilesetRef?.assetId) {
+        const detail = await getTilesetDetail(tilesetRef.assetId);
+        const path = await getAssetFileUrl('tileset', detail?.imageStorageId);
+        return {
+            path: normalizeResourceUrl(path || tilesetRef.path),
+            sourceKind: 'userAsset',
+            assetId: tilesetRef.assetId,
+            version: tilesetRef.version ?? detail?.version ?? null,
+            fileName: detail?.name || getFileNameFromPath(path || tilesetRef.path),
+            meta: detail || null,
+        };
+    }
+
+    const fallbackPath = normalizeResourceUrl(tilesetRef?.path);
+    return {
+        path: fallbackPath,
+        sourceKind: tilesetRef?.sourceKind || 'builtin',
+        assetId: tilesetRef?.assetId ?? null,
+        version: tilesetRef?.version ?? null,
+        fileName: getFileNameFromPath(fallbackPath),
+        meta: null,
+    };
+}
+
+async function resolveSceneAnimationSheetResource(sheetRef) {
+    if (sheetRef?.sourceKind === 'userAsset' && sheetRef?.assetId) {
+        const detail = await getSceneAnimationDetail(sheetRef.assetId);
+        const fileUrl = await getAssetFileUrl('sceneAnimation', detail?.imageStorageId);
+        const sheet = await PIXI.Assets.load(fileUrl);
+        const entryName = sheetRef.name || detail?.animationName || sheetRef.assetId;
+        registerSpritesheetResource(entryName, sheet, {
+            type: 'spritesheet',
+            sourceKind: 'userAsset',
+            assetId: sheetRef.assetId,
+            version: sheetRef.version ?? detail?.version ?? null,
+            fileName: detail?.animationName || getFileNameFromPath(entryName),
+            path: fileUrl,
+            isActive: false,
+            meta: detail || null,
+        });
+        return {
+            entryName,
+            sheet,
+        };
+    }
+
+    const loadPath = sheetRef?.path || sheetRef?.name;
+    const normalizedName = sheetRef?.name || loadPath;
+    const sheet = await PIXI.Assets.load(loadPath?.startsWith('./') ? loadPath : './' + loadPath);
+    registerSpritesheetResource(normalizedName, sheet, {
+        type: 'spritesheet',
+        sourceKind: sheetRef?.sourceKind || 'builtin',
+        assetId: sheetRef?.assetId ?? null,
+        version: sheetRef?.version ?? null,
+        fileName: getFileNameFromPath(normalizedName),
+        path: loadPath,
+        isActive: false,
+    });
+    return {
+        entryName: normalizedName,
+        sheet,
+    };
+}
+
 function loadAnimatedSpritesFromModule(mod){
 
     if(!('animatedsprites' in mod) || mod.animatedsprites.length <= 0){
@@ -1331,24 +1434,30 @@ function loadAnimatedSpritesFromModule(mod){
 
     for(let x = 0; x < mod.animatedsprites.length; x++){
         let spr = mod.animatedsprites[x];
-        if(! m.has(spr.sheet)){
-            m.set(spr.sheet, [spr]);
+        const sheetRef = normalizeAnimatedSpriteSheetRef(spr);
+        const sheetKey = JSON.stringify(sheetRef);
+        if(! m.has(sheetKey)){
+            m.set(sheetKey, {
+                sheetRef,
+                sprites: [spr],
+            });
         }else{
-            m.get(spr.sheet).push(spr);
+            m.get(sheetKey).sprites.push(spr);
         }
     }
 
-    for(let key of m.keys()){
-        console.log("loadAnimatedSpritesFromModule: ",key);
-        PIXI.Assets.load("./"+key).then(
-            function(sheet) {
+    for(let group of m.values()){
+        const { sheetRef, sprites } = group;
+        console.log("loadAnimatedSpritesFromModule: ", sheetRef);
+        resolveSceneAnimationSheetResource(sheetRef).then(
+            function(result) {
 
                 // setup global state so we can use layer addTileLevelMethod
-                g_ctx.spritesheet     = sheet;
-                g_ctx.spritesheetname = key;
-                let asprarray = m.get(key);
-                for (let asprite of asprarray) {
+                g_ctx.spritesheet     = result.sheet;
+                g_ctx.spritesheetname = result.entryName;
+                for (let asprite of sprites) {
                     console.log("Loading animation", asprite.animation);
+                    const resolvedSheetName = normalizeAnimatedSpriteSheetRef(asprite).name || result.entryName;
                     const metaKey = buildSceneAnimInstanceId(
                         asprite.layer,
                         asprite.x,
@@ -1358,23 +1467,18 @@ function loadAnimatedSpritesFromModule(mod){
                     );
                     const meta = metaMap[metaKey] || {};
                     g_ctx.g_layers[asprite.layer].addTileLevelPx(asprite.x, asprite.y, -1, {
-                        sheet: asprite.sheet,
+                        sheet: resolvedSheetName,
                         animationName: asprite.animation,
                         speed: sanitizeSceneAnimSpeed(meta.speed ?? SCENE_ANIM_DEFAULT_SPEED),
                         loop: sanitizeSceneAnimLoop(meta.loop ?? SCENE_ANIM_DEFAULT_LOOP),
                     });
                 }
-                registerSpritesheetResource(key, sheet, {
-                    type: 'spritesheet',
-                    sourceKind: 'builtin',
-                    fileName: getFileNameFromPath(key),
-                    path: key,
-                    isActive: false,
-                });
                 g_ctx.spritesheet     = null;
                 g_ctx.spritesheetname = null;
             }
-        );
+        ).catch((error) => {
+            console.error('loadAnimatedSpritesFromModule: 加载动画资源失败', sheetRef, error);
+        });
     }
 }
 
@@ -1410,16 +1514,24 @@ function loadMapFromModuleFinish(mod) {
 }
 
 function loadMapFromModule(mod) {
-    g_ctx.tilesetpath = mod.tilesetpath;
-    registerTilesetResource(mod.tilesetpath, mod.tilesetpath, {
-        type: 'tileset',
-        sourceKind: 'builtin',
-        fileName: getFileNameFromPath(mod.tilesetpath),
-        isActive: true,
+    const tilesetRef = normalizeTilesetRef(mod);
+    resolveTilesetSourceFromRef(tilesetRef).then((resolved) => {
+        g_ctx.tilesetpath = resolved.path;
+        registerTilesetResource(resolved.path, resolved.path, {
+            type: 'tileset',
+            sourceKind: resolved.sourceKind,
+            assetId: resolved.assetId,
+            version: resolved.version,
+            fileName: resolved.fileName,
+            isActive: true,
+            meta: resolved.meta,
+        });
+        refreshResourceToolbar();
+        initTilesSync(loadMapFromModuleFinish.bind(null, mod));
+        initTiles();
+    }).catch((error) => {
+        console.error('loadMapFromModule: 加载瓦片集失败', tilesetRef, error);
     });
-    refreshResourceToolbar();
-    initTilesSync(loadMapFromModuleFinish.bind(null, mod));
-    initTiles();
 }
 
 function downloadpng(filename) {
@@ -2834,11 +2946,21 @@ function initTiles() {
 }
 
 async function init() {
+ 
+    window.g_ctx = g_ctx;
+    window.__astrtownRegisterTilesetResource = registerTilesetResource;
+    window.__astrtownRegisterSpritesheetResource = registerSpritesheetResource;
+    g_ctx.currentUser = null;
+    g_ctx.isAuthenticated = false;
 
     UI.initMainHTMLWindow();
     attachResourceRegistryAPI();
-
-    g_ctx.onWorkspaceLayoutChange = requestTilesetCanvasMetricsRefresh;
+    UI.updateAuthStatus(null);
+    const currentUser = await initEditorAuth();
+    g_ctx.currentUser = currentUser;
+    g_ctx.isAuthenticated = !!currentUser;
+    UI.updateAuthStatus(currentUser);
+g_ctx.onWorkspaceLayoutChange = requestTilesetCanvasMetricsRefresh;
     window.addEventListener('resize', requestTilesetCanvasMetricsRefresh);
 
     bindTilesetToolbar();
@@ -2929,6 +3051,11 @@ async function init() {
     updateTilesetROIButtons();
     setSceneAnimBrush({});
     updateTilesetSelectionHighlight();
+    window.addEventListener('keydown', (event) => {
+        if (event.code === 'Escape') {
+            closeAssetPicker({ skipCancel: false });
+        }
+    });
 }
 
 init();
